@@ -1,6 +1,7 @@
 from functools import wraps
 import os
 import asyncio
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,6 +18,15 @@ bot = None
 token = os.getenv("TELEGRAM_BOT_TOKEN")
 if token:
     bot = telegram.Bot(token=token)
+    
+    # Start the Telegram bot in a background thread
+    def start_bot():
+        import bot as bot_module
+        bot_module.main()
+    
+    bot_thread = threading.Thread(target=start_bot, daemon=True)
+    bot_thread.start()
+    print("Telegram bot started in background thread.")
 # -------------------------
 
 # --- Basic Authentication ---
