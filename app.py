@@ -85,6 +85,11 @@ def calculate_leave_hours(start_time, end_time):
     duration = datetime.combine(date.today(), end_time) - datetime.combine(date.today(), start_time)
     return duration.total_seconds() / 3600
     
+# --- Health Check (for UptimeRobot) ---
+@app.route('/health')
+def health():
+    return {"status": "ok", "bot": "running"}, 200
+
 # --- Main Routes ---
 @app.route('/')
 @requires_auth
