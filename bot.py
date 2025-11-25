@@ -748,7 +748,7 @@ def main() -> None:
     # The replacement employee is not in the conversation, so this must be global
     application.add_handler(CallbackQueryHandler(replacement_response_handler, pattern='^rep_(accept|reject)_'))
 
-    application.run_polling()
+    application.run_polling(stop_signals=None, close_loop=False)
 
 if __name__ == "__main__":
     main()
