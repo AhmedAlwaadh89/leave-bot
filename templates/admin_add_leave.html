@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">➕ إضافة إجازة (استثناء)</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label">الموظف</label>
+                        <select name="employee_id" class="form-select" required>
+                            <option value="">اختر الموظف...</option>
+                            {% for emp in employees %}
+                            <option value="{{ emp.id }}">{{ emp.full_name }} (رصيد: {{ emp.daily_leave_balance }} يوم |
+                                {{ emp.hourly_leave_balance }} ساعة)</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">نوع الإجازة</label>
+                        <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
+                            <option value="يومية">يومية</option>
+                            <option value="بالساعة">بالساعة</option>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">تاريخ البدء</label>
+                            <input type="date" name="start_date" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3" id="end_date_div">
+                            <label class="form-label">تاريخ الانتهاء</label>
+                            <input type="date" name="end_date" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="row" id="time_div" style="display: none;">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">وقت البدء</label>
+                            <input type="time" name="start_time" class="form-control">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">وقت الانتهاء</label>
+                            <input type="time" name="end_time" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">السبب / ملاحظات الإدارة</label>
+                        <textarea name="reason" class="form-control" rows="3"
+                            placeholder="أدخل سبب الإجازة أو ملاحظات الاستثناء..."></textarea>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="ignore_balance" id="ignore_balance">
+                        <label class="form-check-label text-danger" for="ignore_balance">
+                            تجاهل تحذير الرصيد (خصم حتى لو أصبح بالسالب)
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">إضافة وموافقة فورية</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function toggleFields() {
+        const type = document.getElementById('leave_type').value;
+        const endDateDiv = document.getElementById('end_date_div');
+        const timeDiv = document.getElementById('time_div');
+
+        if (type === 'يومية') {
+            endDateDiv.style.display = 'block';
+            timeDiv.style.display = 'none';
+        } else {
+            endDateDiv.style.display = 'none';
+            timeDiv.style.display = 'flex';
+        }
+    }
+    toggleFields();
+</script>
+{% endblock %}

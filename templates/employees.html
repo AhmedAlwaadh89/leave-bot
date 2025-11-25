@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">👥 إدارة الموظفين</h4>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>الاسم الكامل</th>
+                                <th>القسم</th>
+                                <th>الحالة</th>
+                                <th>مدير؟</th>
+                                <th>رصيد أيام</th>
+                                <th>رصيد ساعات</th>
+                                <th>تحديث البيانات</th>
+                                <th>الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for employee in employees %}
+                            <tr>
+                                <form action="{{ url_for('update_user', user_id=employee.id) }}" method="POST">
+                                    <td>{{ employee.id }}</td>
+                                    <td><input type="text" name="full_name" class="form-control form-control-sm"
+                                            value="{{ employee.full_name }}"></td>
+                                    <td><input type="text" name="department" class="form-control form-control-sm"
+                                            value="{{ employee.department or '' }}" placeholder="القسم"></td>
+                                    <td>
+                                        {% if employee.status == 'approved' %}
+                                        <span class="badge bg-success">نشط</span>
+                                        {% elif employee.status == 'pending' %}
+                                        <span class="badge bg-warning text-dark">انتظار</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">محظور</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" name="is_manager" {% if
+                                                employee.is_manager %}checked{% endif %}>
+                                        </div>
+                                    </td>
+                                    <td><input type="number" step="0.5" name="daily_balance"
+                                            class="form-control form-control-sm"
+                                            value="{{ employee.daily_leave_balance }}" style="width: 80px;"></td>
+                                    <td><input type="number" step="0.5" name="hourly_balance"
+                                            class="form-control form-control-sm"
+                                            value="{{ employee.hourly_leave_balance }}" style="width: 80px;"></td>
+                                    <td>
+                                        <button type="submit" class="btn btn-primary btn-sm">حفظ</button>
+                                    </td>
+                                </form>
+                                <td>
+                                    {% if employee.status == 'pending' %}
+                                    <a href="{{ url_for('approve_user_web', user_id=employee.id) }}"
+                                        class="btn btn-success btn-sm">موافقة</a>
+                                    <a href="{{ url_for('reject_user_web', user_id=employee.id) }}"
+                                        class="btn btn-danger btn-sm">رفض</a>
+                                    {% else %}
+                                    <a href="{{ url_for('reject_user_web', user_id=employee.id) }}"
+                                        class="btn btn-outline-danger btn-sm"
+                                        onclick="return confirm('هل أنت متأكد من حذف هذا الموظف؟')">حذف</a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">➕ إضافة عطلة جديدة</h4>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('add_holiday') }}" method="POST">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">اسم العطلة</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="date" class="form-label">التاريخ</label>
+                        <input type="date" class="form-control" id="date" name="date" required>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">إضافة</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">📅 قائمة العطلات الرسمية</h4>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>اسم العطلة</th>
+                                <th>التاريخ</th>
+                                <th>الإجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for holiday in holidays %}
+                            <tr>
+                                <td>{{ holiday.name }}</td>
+                                <td>{{ holiday.date }}</td>
+                                <td>
+                                    <a href="{{ url_for('delete_holiday', holiday_id=holiday.id) }}"
+                                        class="btn btn-danger btn-sm" onclick="return confirm('هل أنت متأكد؟')">حذف</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

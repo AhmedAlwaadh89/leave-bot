@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">✏️ تعديل طلب الإجازة #{{ request.id }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label">الموظف</label>
+                        <input type="text" class="form-control" value="{{ request.employee.full_name }}" disabled>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">نوع الإجازة</label>
+                        <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
+                            <option value="يومية" {% if request.leave_type=='يومية' %}selected{% endif %}>يومية</option>
+                            <option value="بالساعة" {% if request.leave_type=='بالساعة' %}selected{% endif %}>بالساعة
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">تاريخ البدء</label>
+                            <input type="date" name="start_date" class="form-control" value="{{ request.start_date }}"
+                                required>
+                        </div>
+                        <div class="col-md-6 mb-3" id="end_date_div">
+                            <label class="form-label">تاريخ الانتهاء</label>
+                            <input type="date" name="end_date" class="form-control" value="{{ request.end_date }}">
+                        </div>
+                    </div>
+
+                    <div class="row" id="time_div" style="display: none;">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">وقت البدء</label>
+                            <input type="time" name="start_time" class="form-control"
+                                value="{{ request.start_time.strftime('%H:%M') if request.start_time else '' }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">وقت الانتهاء</label>
+                            <input type="time" name="end_time" class="form-control"
+                                value="{{ request.end_time.strftime('%H:%M') if request.end_time else '' }}">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">السبب</label>
+                        <textarea name="reason" class="form-control" rows="3">{{ request.reason }}</textarea>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('index') }}" class="btn btn-secondary">إلغاء</a>
+                        <button type="submit" class="btn btn-primary">حفظ التغييرات</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function toggleFields() {
+        const type = document.getElementById('leave_type').value;
+        const endDateDiv = document.getElementById('end_date_div');
+        const timeDiv = document.getElementById('time_div');
+
+        if (type === 'يومية') {
+            endDateDiv.style.display = 'block';
+            timeDiv.style.display = 'none';
+        } else {
+            endDateDiv.style.display = 'none';
+            timeDiv.style.display = 'flex';
+        }
+    }
+    // Run on load
+    toggleFields();
+</script>
+{% endblock %}

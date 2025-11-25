@@ -1,0 +1,7 @@
+python-telegram-bot
+Flask
+SQLAlchemy
+gunicorn
+dateparser
+python-dotenv
+psycopg2-binary

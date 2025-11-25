@@ -1,0 +1,138 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">🔍 تصفية التقارير</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">الموظف</label>
+                        <select name="employee_id" class="form-select">
+                            <option value="">الكل</option>
+                            {% for emp in employees %}
+                            <option value="{{ emp.id }}">{{ emp.full_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">من تاريخ</label>
+                        <input type="date" name="start_date" class="form-control">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">إلى تاريخ</label>
+                        <input type="date" name="end_date" class="form-control">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">الحالة</label>
+                        <select name="status" class="form-select">
+                            <option value="">الكل</option>
+                            <option value="approved">مقبول</option>
+                            <option value="pending">قيد الانتظار</option>
+                            <option value="rejected">مرفوض</option>
+                        </select>
+                    </div>
+                    <div class="col-12 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">بحث</button>
+                        <a href="{{ url_for('export_reports', **request.form) }}" class="btn btn-success"
+                            id="exportBtn">تصدير Excel</a>
+                        <button type="button" class="btn btn-secondary" onclick="window.print()">طباعة</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body * {
+            visibility: hidden;
+        }
+
+        .table-responsive,
+        .table-responsive * {
+            visibility: visible;
+        }
+
+        .table-responsive {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+        }
+
+        .card-header,
+        .btn {
+            display: none !important;
+        }
+    }
+</style>
+
+<script>
+    // Update export link with current form data
+    // Update export link with current form data
+    // No need to intercept form submit for search functionality
+
+
+    document.getElementById('exportBtn').addEventListener('click', function (e) {
+        e.preventDefault();
+        const formData = new FormData(document.querySelector('form'));
+        const params = new URLSearchParams(formData);
+        window.location.href = "{{ url_for('export_reports') }}?" + params.toString();
+    });
+</script>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-white">
+                <h4 class="mb-0">📊 النتائج</h4>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>الموظف</th>
+                                <th>النوع</th>
+                                <th>التاريخ</th>
+                                <th>السبب</th>
+                                <th>الحالة</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for req in results %}
+                            <tr>
+                                <td>{{ req.employee.full_name }}</td>
+                                <td>{{ req.leave_type }}</td>
+                                <td>
+                                    {% if req.leave_type == 'يومية' %}
+                                    {{ req.start_date }} ➡️ {{ req.end_date }}
+                                    {% else %}
+                                    {{ req.start_date }} ({{ req.start_time }} - {{ req.end_time }})
+                                    {% endif %}
+                                </td>
+                                <td>{{ req.reason }}</td>
+                                <td>
+                                    {% if req.status == 'approved' %}
+                                    <span class="badge bg-success">مقبول</span>
+                                    {% elif req.status == 'pending' %}
+                                    <span class="badge bg-warning text-dark">انتظار</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">مرفوض</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
