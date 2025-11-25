@@ -43,8 +43,12 @@ class Holiday(Base):
 import os
 
 # Setup database
+# Setup database
 # Use DATABASE_URL if available (for production), otherwise fallback to SQLite (for local dev)
-database_url = os.getenv('DATABASE_URL', 'sqlite:///leave_management.db')
+database_url = os.getenv('DATABASE_URL')
+if not database_url or not database_url.strip():
+    database_url = 'sqlite:///leave_management.db'
+
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
