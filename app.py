@@ -21,6 +21,10 @@ if token:
     
     # Start the Telegram bot in a background thread
     def start_bot():
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         import bot as bot_module
         bot_module.main()
     
