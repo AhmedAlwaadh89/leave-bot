@@ -46,13 +46,34 @@ import os
 # Setup database
 # Use DATABASE_URL if available (for production), otherwise fallback to SQLite (for local dev)
 database_url = os.getenv('DATABASE_URL')
-if not database_url or not database_url.strip():
-    database_url = 'sqlite:///leave_management.db'
 
-if database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql://", 1)
+# Helper to mask URL for logging
+def mask_url(url):
+    if not url: return "None"
+    try:
+        return url.split('@')[-1] # Show only host/db part
+    except:
+        return "Invalid URL format"
 
-engine = create_engine(database_url)
+if database_url and database_url.strip():
+    database_url = database_url.strip()
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    
+    print(f"Attempting to connect to: {mask_url(database_url)}")
+    
+    try:
+        engine = create_engine(database_url)
+        # Test connection
+        with engine.connect() as conn:
+            pass
+    except Exception as e:
+        print(f"Error connecting to DATABASE_URL: {e}")
+        print("Falling back to SQLite...")
+        engine = create_engine('sqlite:///leave_management.db')
+else:
+    print("DATABASE_URL not set. Using SQLite.")
+    engine = create_engine('sqlite:///leave_management.db')
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
