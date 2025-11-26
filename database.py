@@ -60,10 +60,22 @@ if database_url and database_url.strip():
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     
-    print(f"Attempting to connect to: {mask_url(database_url)}")
+    print(f"Attempting to connect to:{mask_url(database_url)}")
     
     try:
-        engine = create_engine(database_url)
+        # Connection pooling settings for Neon.tech
+        engine = create_engine(
+            database_url,
+            pool_pre_ping=True,  # Test connections before using
+            pool_recycle=300,     # Recycle connections after 5 minutes
+            connect_args={
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5
+            }
+        )
         # Test connection
         with engine.connect() as conn:
             pass
