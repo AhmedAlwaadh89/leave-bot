@@ -376,9 +376,13 @@ async def replacement_employee_handler(update: Update, context: ContextTypes.DEF
     ]
     
     try:
+        time_info = ""
+        if context.user_data.get('leave_type') == 'بالساعة' and context.user_data.get('start_time') and context.user_data.get('end_time'):
+             time_info = f"\nمن الساعة: {context.user_data.get('start_time').strftime('%H:%M')} إلى الساعة: {context.user_data.get('end_time').strftime('%H:%M')}"
+
         await context.bot.send_message(
             chat_id=replacement.telegram_id,
-            text=f"طلب بديل: الموظف {requester.full_name} يطلب منك أن تكون بديلاً له في إجازته من {new_request.start_date} إلى {new_request.end_date}.\nالسبب: {new_request.reason}",
+            text=f"طلب بديل: الموظف {requester.full_name} يطلب منك أن تكون بديلاً له في إجازته من {new_request.start_date} إلى {new_request.end_date}.{time_info}\nالسبب: {new_request.reason}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         await query.edit_message_text(f"تم إرسال الطلب للموظف البديل {replacement.full_name}. بانتظار موافقته...")
@@ -453,47 +457,63 @@ def create_leave_request_record(context, employee_id, status, rep_status):
 
 async def submit_leave_request(update_or_query, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Helper to save the leave request to the DB and notify managers (No replacement case)."""
+    # Clear any pending invalid transactions
+    session.rollback()
+    
     user_id = update_or_query.effective_user.id
     employee = session.query(Employee).filter_by(telegram_id=user_id).first()
 
-    # Create and save the leave request
-    new_request = create_leave_request_record(context, employee.id, 'pending', 'not_required')
-    
-    # Notify managers
-    await notify_managers_new_request(context, new_request)
-
-    # Respond to the user
-    text = "تم تقديم طلب الإجازة الخاص بك بنجاح وهو الآن قيد المراجعة."
-    if isinstance(update_or_query, Update):
-        await update_or_query.message.reply_text(text)
-    else: # It's a CallbackQuery
-        await update_or_query.edit_message_text(text)
+    try:
+        # Create and save the leave request
+        new_request = create_leave_request_record(context, employee.id, 'pending', 'not_required')
         
-    context.user_data.clear()
-    return ConversationHandler.END
+        # Notify managers
+        await notify_managers_new_request(context, new_request)
 
-async def notify_managers_new_request(context, new_request):
-    employee = new_request.employee
-    message = (
-        f"طلب إجازة جديد من *{employee.full_name}* (ID: `{new_request.id}`)\n"
-        f"القسم: {employee.department}\n"
-        f"النوع: {new_request.leave_type}\n"
-    )
-    if new_request.leave_type == 'يومية':
-        message += f"من: {new_request.start_date.strftime('%Y-%m-%d')} إلى: {new_request.end_date.strftime('%Y-%m-%d')}\n"
-    else: # بالساعة
-        message += (
-            f"التاريخ: {new_request.start_date.strftime('%Y-%m-%d')}\n"
-            f"من الساعة: {new_request.start_time.strftime('%H:%M')} إلى الساعة: {new_request.end_time.strftime('%H:%M')}\n"
-        )
-    message += f"السبب: {new_request.reason}\n"
-    message += f"💰 *الرصيد الحالي:* أيام: {employee.daily_leave_balance} | ساعات: {employee.hourly_leave_balance}"
+        # Respond to the user
+        text = "تم تقديم طلب الإجازة الخاص بك بنجاح وهو الآن قيد المراجعة."
+        if isinstance(update_or_query, Update):
+            await update_or_query.message.reply_text(text)
+        else: # It's a CallbackQuery
+            await update_or_query.edit_message_text(text)
+            
+        context.user_data.clear()
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error submitting leave request: {e}")
+        session.rollback()
+        error_text = "حدث خطأ أثناء تقديم طلب الإجازة. يرجى المحاولة مرة أخرى."
+        if isinstance(update_or_query, Update):
+            await update_or_query.message.reply_text(error_text)
+        else:
+            await update_or_query.edit_message_text(error_text)
+        context.user_data.clear()
+        return ConversationHandler.END
 
-    if new_request.replacement_employee_id:
-        replacement = session.get(Employee, new_request.replacement_employee_id)
-        message += f"\nالموظف البديل: {replacement.full_name} (✅ وافق)"
+async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, request: LeaveRequest):
+    """Notifies all managers about a new leave request."""
+    managers = session.query(Employee).filter_by(is_manager=True).all()
+    
+    time_info = ""
+    if request.leave_type == 'بالساعة' and request.start_time and request.end_time:
+        time_info = f"\nمن الساعة: {request.start_time.strftime('%H:%M')} إلى الساعة: {request.end_time.strftime('%H:%M')}"
 
-    await notify_managers(context, message)
+    keyboard = [
+        [
+            InlineKeyboardButton(f"✅ موافقة {request.id}", callback_data=f"admin_approve_{request.id}"),
+            InlineKeyboardButton(f"❌ رفض {request.id}", callback_data=f"admin_reject_{request.id}")
+        ]
+    ]
+    
+    for manager in managers:
+        try:
+            await context.bot.send_message(
+                chat_id=manager.telegram_id,
+                text=f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nمن: {request.start_date} إلى: {request.end_date}{time_info}\nالسبب: {request.reason}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify manager {manager.full_name}: {e}")
 
 
 # --- Callback Query (Button) Handler ---
@@ -583,26 +603,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-    elif query.data == 'admin_export_report':
-        # Export approved leaves to Excel
-        leaves = session.query(LeaveRequest).filter_by(status='approved').all()
+        # Export all leaves (approved, rejected, pending) to Excel
+        leaves = session.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
         
         if not leaves:
-            await query.edit_message_text("لا يوجد إجازات معتمدة لتصديرها.")
+            await query.edit_message_text("لا يوجد إجازات لتصديرها.")
             return
 
         data = []
         for leave in leaves:
+            status_map = {'approved': 'مقبولة', 'rejected': 'مرفوضة', 'pending': 'قيد الانتظار'}
             data.append({
                 'ID': leave.id,
                 'الموظف': leave.employee.full_name,
                 'النوع': leave.leave_type,
+                'الحالة': status_map.get(leave.status, leave.status),
                 'من': leave.start_date,
                 'إلى': leave.end_date,
-                'من ساعة': leave.start_time if leave.start_time else '-',
-                'إلى ساعة': leave.end_time if leave.end_time else '-',
+                'من ساعة': leave.start_time.strftime('%H:%M') if leave.start_time else '-',
+                'إلى ساعة': leave.end_time.strftime('%H:%M') if leave.end_time else '-',
                 'السبب': leave.reason,
-                'البديل': leave.replacement_employee.full_name if leave.replacement_employee else 'لا يوجد'
+                'البديل': leave.replacement_employee.full_name if leave.replacement_employee else 'لا يوجد',
+                'تمت الموافقة بواسطة': leave.approved_by if leave.approved_by else '-'
             })
         
         df = pd.DataFrame(data)
@@ -610,20 +632,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Save to BytesIO
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Approved Leaves')
+            df.to_excel(writer, index=False, sheet_name='All Leaves')
         output.seek(0)
         
         await context.bot.send_document(
             chat_id=query.message.chat_id,
             document=output,
             filename=f"leaves_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            caption="📊 تقرير الإجازات المعتمدة"
+            caption="📊 تقرير جميع الإجازات"
         )
         await query.edit_message_text("تم إرسال التقرير بنجاح.")
 
     elif query.data.startswith('admin_approve_'):
         req_id = int(query.data.split('_')[2])
         req = session.get(LeaveRequest, req_id)
+        
+        # Get admin name
+        admin_id = query.from_user.id
+        admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
+        admin_name = admin.full_name if admin else f"Admin {admin_id}"
+
         if req and req.status == 'pending':
             # Deduct balance logic should ideally be shared, but for now simplistic:
             # We should probably call the logic in app.py or duplicate it here.
@@ -669,7 +697,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             req.status = 'rejected'
             session.commit()
             await query.edit_message_text(f"تم رفض طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
-            await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req_id}).")
+            await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req.id}).")
     elif query.data == 'admin_manage_employees':
         pending = session.query(Employee).filter_by(status='pending').all()
         if not pending:
@@ -733,6 +761,12 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         elif query.data.startswith('admin_approve_'):
             req_id = int(query.data.split('_')[2])
             req = session.get(LeaveRequest, req_id)
+            
+            # Get admin name
+            admin_id = query.from_user.id
+            admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
+            admin_name = admin.full_name if admin else f"Admin {admin_id}"
+
             if req and req.status == 'pending':
                 emp = req.employee
                 if req.leave_type == 'يومية':
@@ -747,30 +781,52 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                         await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
                         return
                     emp.daily_leave_balance -= days
+                    req.status = 'approved'
+                    req.approved_by = admin_name
+                    session.commit()
+                    
+                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
+                    await context.bot.send_message(emp.telegram_id, f"✅ تمت الموافقة على طلب إجازتك رقم {req.id}.")
                 
                 elif req.leave_type == 'بالساعة':
-                    duration = datetime.combine(date.today(), req.end_time) - datetime.combine(date.today(), req.start_time)
-                    hours = duration.total_seconds() / 3600
-                    if emp.hourly_leave_balance < hours:
-                        await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                        return
-                    emp.hourly_leave_balance -= hours
+                    # For simplicity, just approve for now without deduction logic or implement simple deduction
+                    # Assuming hourly_leave_balance is in hours
+                    # Calculate hours
+                    if req.start_time and req.end_time:
+                        # Simple hour diff
+                        t1 = datetime.combine(date.min, req.start_time)
+                        t2 = datetime.combine(date.min, req.end_time)
+                        diff = (t2 - t1).total_seconds() / 3600
+                        
+                        if emp.hourly_leave_balance < diff:
+                             await query.answer("رصيد الساعات غير كافٍ!", show_alert=True)
+                             return
 
-                req.status = 'approved'
-                session.commit()
-                await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.")
-                await context.bot.send_message(emp.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {req_id}).")
+                        emp.hourly_leave_balance -= diff
+
+                    req.status = 'approved'
+                    req.approved_by = admin_name
+                    session.commit()
+                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة الساعية رقم {req.id} بواسطة {admin_name}.")
+                    await context.bot.send_message(emp.telegram_id, f"✅ تمت الموافقة على طلب إجازتك الساعية رقم {req.id}.")
             else:
                  await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
 
         elif query.data.startswith('admin_reject_'):
             req_id = int(query.data.split('_')[2])
             req = session.get(LeaveRequest, req_id)
+            
+            # Get admin name
+            admin_id = query.from_user.id
+            admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
+            admin_name = admin.full_name if admin else f"Admin {admin_id}"
+
             if req and req.status == 'pending':
                 req.status = 'rejected'
+                req.approved_by = admin_name
                 session.commit()
-                await query.edit_message_text(f"تم رفض طلب الإجازة {req_id}.")
-                await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req_id}).")
+                await query.edit_message_text(f"تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
+                await context.bot.send_message(req.employee.telegram_id, f"❌ تم رفض طلب إجازتك رقم {req.id}.")
             else:
                 await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
                 

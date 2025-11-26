@@ -30,6 +30,7 @@ class LeaveRequest(Base):
     status = Column(String, default='pending')
     replacement_employee_id = Column(Integer, ForeignKey('employees.id'), nullable=True)
     replacement_approval_status = Column(String, default='pending') # pending, accepted, rejected, not_required
+    approved_by = Column(String, nullable=True) # Name of the manager who approved/rejected
     employee = relationship("Employee", back_populates="leave_requests", foreign_keys=[employee_id])
     replacement_employee = relationship("Employee", back_populates="replacement_for", foreign_keys=[replacement_employee_id])
 
