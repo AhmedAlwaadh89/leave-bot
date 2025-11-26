@@ -3,6 +3,8 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
+import io
+import pandas as pd
 
 load_dotenv()
 from sqlalchemy import or_
@@ -67,13 +69,13 @@ def get_main_menu_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
         keyboard.append([InlineKeyboardButton("👑 قائمة المدير", callback_data='admin_menu')])
     return InlineKeyboardMarkup(keyboard)
 
-def get_admin_menu_keyboard() -> InlineKeyboardMarkup:
-    keyboard = [
-        [InlineKeyboardButton("⏳ مراجعة طلبات الإجازة", callback_data='admin_review_leaves')],
-        [InlineKeyboardButton("👥 إدارة تسجيل الموظفين", callback_data='admin_manage_employees')],
-        [InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data='main_menu')],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+def get_admin_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("مراجعة الطلبات", callback_data='admin_review_leaves')],
+        [InlineKeyboardButton("إدارة الموظفين", callback_data='admin_manage_employees')],
+        [InlineKeyboardButton("📊 تقرير الإجازات", callback_data='admin_export_report')],
+        [InlineKeyboardButton("القائمة الرئيسية", callback_data='main_menu')]
+    ])
 
 async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, reply_markup: InlineKeyboardMarkup = None):
     logger.info("Attempting to notify managers...")
@@ -101,6 +103,16 @@ async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, repl
                 logger.info(f"Sent notification to manager {managers[i].telegram_id}.")
 
 # --- Main Commands & Handlers ---
+
+def has_overlapping_leave(employee_id, start_date, end_date):
+    """Checks if the employee has any overlapping approved or pending leave."""
+    overlap = session.query(LeaveRequest).filter(
+        LeaveRequest.employee_id == employee_id,
+        LeaveRequest.status != 'rejected',
+        LeaveRequest.start_date <= end_date,
+        LeaveRequest.end_date >= start_date
+    ).first()
+    return overlap is not None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles /start command, showing main menu or starting registration."""
@@ -324,11 +336,24 @@ async def leave_reason_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def replacement_employee_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles the replacement employee selection and starts the approval flow."""
+    # Clear any pending invalid transactions
+    session.rollback()
+    
     query = update.callback_query
     await query.answer()
     
     replacement_id = int(query.data.split('_')[1])
     context.user_data['replacement_id'] = replacement_id if replacement_id != 0 else None
+
+    # Check for duplicates before proceeding
+    start_date = context.user_data['start_date']
+    end_date = context.user_data['end_date']
+    requester_id = session.query(Employee).filter_by(telegram_id=query.from_user.id).first().id
+    
+    if has_overlapping_leave(requester_id, start_date, end_date):
+        await query.edit_message_text("عذراً، لديك طلب إجازة آخر في نفس الفترة أو يتداخل معها.")
+        context.user_data.clear()
+        return ConversationHandler.END
     
     if replacement_id == 0:
         # No replacement needed, submit directly
@@ -366,6 +391,9 @@ async def replacement_employee_handler(update: Update, context: ContextTypes.DEF
 
 async def replacement_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles the replacement employee's acceptance or rejection."""
+    # Clear any pending invalid transactions
+    session.rollback()
+    
     query = update.callback_query
     await query.answer()
     
@@ -554,6 +582,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+    elif query.data == 'admin_export_report':
+        # Export approved leaves to Excel
+        leaves = session.query(LeaveRequest).filter_by(status='approved').all()
+        
+        if not leaves:
+            await query.edit_message_text("لا يوجد إجازات معتمدة لتصديرها.")
+            return
+
+        data = []
+        for leave in leaves:
+            data.append({
+                'ID': leave.id,
+                'الموظف': leave.employee.full_name,
+                'النوع': leave.leave_type,
+                'من': leave.start_date,
+                'إلى': leave.end_date,
+                'من ساعة': leave.start_time if leave.start_time else '-',
+                'إلى ساعة': leave.end_time if leave.end_time else '-',
+                'السبب': leave.reason,
+                'البديل': leave.replacement_employee.full_name if leave.replacement_employee else 'لا يوجد'
+            })
+        
+        df = pd.DataFrame(data)
+        
+        # Save to BytesIO
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Approved Leaves')
+        output.seek(0)
+        
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=output,
+            filename=f"leaves_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            caption="📊 تقرير الإجازات المعتمدة"
+        )
+        await query.edit_message_text("تم إرسال التقرير بنجاح.")
 
     elif query.data.startswith('admin_approve_'):
         req_id = int(query.data.split('_')[2])
