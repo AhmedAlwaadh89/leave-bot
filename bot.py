@@ -45,7 +45,7 @@ def check_conflicts(employee_id: int, start_date: date, end_date: date) -> bool:
     if not employee or not employee.department:
         return False
         
-    conflicts = session.query(LeaveRequest).join(Employee).filter(
+    conflicts = session.query(LeaveRequest).join(Employee, LeaveRequest.employee_id == Employee.id).filter(
         Employee.department == employee.department,
         Employee.id != employee_id,
         LeaveRequest.status == 'approved',
