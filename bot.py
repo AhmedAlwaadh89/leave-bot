@@ -365,34 +365,40 @@ async def replacement_response_handler(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     await query.answer()
     
-    action, request_id = query.data.split('_')[1], int(query.data.split('_')[2])
-    leave_request = session.get(LeaveRequest, request_id)
+    try:
+        action, request_id = query.data.split('_')[1], int(query.data.split('_')[2])
+        leave_request = session.get(LeaveRequest, request_id)
+        
+        if not leave_request:
+            await query.edit_message_text("عذراً، لم يتم العثور على الطلب.")
+            return 0
+            
+        if action == 'accept':
+            leave_request.replacement_approval_status = 'accepted'
+            session.commit()
+            await query.edit_message_text("شكراً لك. تم قبول طلب البديل.")
+            
+            # Notify Requester
+            requester = leave_request.employee
+            await context.bot.send_message(requester.telegram_id, f"وافق {leave_request.replacement_employee.full_name} على أن يكون بديلاً لك. تم رفع الطلب للإدارة.")
+            
+            # Notify Managers
+            await notify_managers_new_request(context, leave_request)
+            
+        elif action == 'reject':
+            leave_request.replacement_approval_status = 'rejected'
+            leave_request.status = 'rejected' # Auto reject if replacement refuses? Or just cancel?
+            session.commit()
+            await query.edit_message_text("تم رفض طلب البديل.")
+            
+            # Notify Requester
+            requester = leave_request.employee
+            await context.bot.send_message(requester.telegram_id, f"عذراً، رفض {leave_request.replacement_employee.full_name} طلب البديل. تم إلغاء طلب الإجازة.")
     
-    if not leave_request:
-        await query.edit_message_text("عذراً، لم يتم العثور على الطلب.")
-        return 0
-        
-    if action == 'accept':
-        leave_request.replacement_approval_status = 'accepted'
-        session.commit()
-        await query.edit_message_text("شكراً لك. تم قبول طلب البديل.")
-        
-        # Notify Requester
-        requester = leave_request.employee
-        await context.bot.send_message(requester.telegram_id, f"وافق {leave_request.replacement_employee.full_name} على أن يكون بديلاً لك. تم رفع الطلب للإدارة.")
-        
-        # Notify Managers
-        await notify_managers_new_request(context, leave_request)
-        
-    elif action == 'reject':
-        leave_request.replacement_approval_status = 'rejected'
-        leave_request.status = 'rejected' # Auto reject if replacement refuses? Or just cancel?
-        session.commit()
-        await query.edit_message_text("تم رفض طلب البديل.")
-        
-        # Notify Requester
-        requester = leave_request.employee
-        await context.bot.send_message(requester.telegram_id, f"عذراً، رفض {leave_request.replacement_employee.full_name} طلب البديل. تم إلغاء طلب الإجازة.")
+    except Exception as e:
+        logger.error(f"Error in replacement_response_handler: {e}")
+        await query.edit_message_text("حدث خطأ أثناء معالجة الطلب. يرجى المحاولة مرة أخرى.")
+        session.rollback()
 
     return 0
 
@@ -623,74 +629,82 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    # Check if user is manager
-    if not is_manager(query.from_user.id):
-        await query.edit_message_text("ليس لديك صلاحيات المدير.")
-        return
+    try:
+        # Check if user is manager
+        if not is_manager(query.from_user.id):
+            await query.edit_message_text("ليس لديك صلاحيات المدير.")
+            return
 
-    if query.data.startswith('approve_user_'):
-        user_to_approve_id = int(query.data.split('_')[2])
-        user = session.get(Employee, user_to_approve_id)
-        if user and user.status == 'pending':
-            user.status = 'approved'
-            session.commit()
-            await query.edit_message_text(f"تمت الموافقة على {user.full_name}.")
-            await context.bot.send_message(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. اضغط /start للبدء.")
-        else:
-            await query.edit_message_text("المستخدم غير موجود أو تمت الموافقة عليه مسبقاً.")
-    
-    elif query.data.startswith('reject_user_'):
-        user_to_reject_id = int(query.data.split('_')[2])
-        user = session.get(Employee, user_to_reject_id)
-        if user:
-            await context.bot.send_message(user.telegram_id, "نأسف، تم رفض طلب تسجيلك.")
-            session.delete(user)
-            session.commit()
-            await query.edit_message_text(f"تم رفض وحذف {user.full_name}.")
-        else:
-            await query.edit_message_text("المستخدم غير موجود.")
+        if query.data.startswith('approve_user_'):
+            user_to_approve_id = int(query.data.split('_')[2])
+            user = session.get(Employee, user_to_approve_id)
+            if user and user.status == 'pending':
+                user.status = 'approved'
+                session.commit()
+                await query.edit_message_text(f"تمت الموافقة على {user.full_name}.")
+                await context.bot.send_message(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. اضغط /start للبدء.")
+            else:
+                await query.edit_message_text("المستخدم غير موجود أو تمت الموافقة عليه مسبقاً.")
+        
+        elif query.data.startswith('reject_user_'):
+            user_to_reject_id = int(query.data.split('_')[2])
+            user = session.get(Employee, user_to_reject_id)
+            if user:
+                await context.bot.send_message(user.telegram_id, "نأسف، تم رفض طلب تسجيلك.")
+                session.delete(user)
+                session.commit()
+                await query.edit_message_text(f"تم رفض وحذف {user.full_name}.")
+            else:
+                await query.edit_message_text("المستخدم غير موجود.")
 
-    elif query.data.startswith('admin_approve_'):
-        req_id = int(query.data.split('_')[2])
-        req = session.get(LeaveRequest, req_id)
-        if req and req.status == 'pending':
-            emp = req.employee
-            if req.leave_type == 'يومية':
-                days = 0
-                curr = req.start_date
-                while curr <= req.end_date:
-                    if curr.weekday() not in [4, 5]: 
-                        days += 1
-                    curr += timedelta(days=1)
+        elif query.data.startswith('admin_approve_'):
+            req_id = int(query.data.split('_')[2])
+            req = session.get(LeaveRequest, req_id)
+            if req and req.status == 'pending':
+                emp = req.employee
+                if req.leave_type == 'يومية':
+                    days = 0
+                    curr = req.start_date
+                    while curr <= req.end_date:
+                        if curr.weekday() not in [4, 5]: 
+                            days += 1
+                        curr += timedelta(days=1)
+                    
+                    if emp.daily_leave_balance < days:
+                        await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
+                        return
+                    emp.daily_leave_balance -= days
                 
-                if emp.daily_leave_balance < days:
-                    await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                    return
-                emp.daily_leave_balance -= days
-            
-            elif req.leave_type == 'بالساعة':
-                duration = datetime.combine(date.today(), req.end_time) - datetime.combine(date.today(), req.start_time)
-                hours = duration.total_seconds() / 3600
-                if emp.hourly_leave_balance < hours:
-                    await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                    return
-                emp.hourly_leave_balance -= hours
+                elif req.leave_type == 'بالساعة':
+                    duration = datetime.combine(date.today(), req.end_time) - datetime.combine(date.today(), req.start_time)
+                    hours = duration.total_seconds() / 3600
+                    if emp.hourly_leave_balance < hours:
+                        await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
+                        return
+                    emp.hourly_leave_balance -= hours
 
-            req.status = 'approved'
-            session.commit()
-            await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.")
-            await context.bot.send_message(emp.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {req_id}).")
-        else:
-             await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
+                req.status = 'approved'
+                session.commit()
+                await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.")
+                await context.bot.send_message(emp.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {req_id}).")
+            else:
+                 await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
 
-    elif query.data.startswith('admin_reject_'):
-        req_id = int(query.data.split('_')[2])
-        req = session.get(LeaveRequest, req_id)
-        if req and req.status == 'pending':
-            req.status = 'rejected'
-            session.commit()
-            await query.edit_message_text(f"تم رفض طلب الإجازة {req_id}.")
-            await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req_id}).")
+        elif query.data.startswith('admin_reject_'):
+            req_id = int(query.data.split('_')[2])
+            req = session.get(LeaveRequest, req_id)
+            if req and req.status == 'pending':
+                req.status = 'rejected'
+                session.commit()
+                await query.edit_message_text(f"تم رفض طلب الإجازة {req_id}.")
+                await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req_id}).")
+            else:
+                await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
+                
+    except Exception as e:
+        logger.error(f"Error in global_admin_handler: {e}")
+        await query.edit_message_text("حدث خطأ أثناء معالجة الطلب. يرجى المحاولة مرة أخرى.")
+        session.rollback()  # Rollback on error
 
 # --- Cancel ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

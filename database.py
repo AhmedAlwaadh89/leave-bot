@@ -76,7 +76,10 @@ else:
     engine = create_engine('sqlite:///leave_management.db')
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
-session = Session()
+
+# Use scoped_session for thread-safe access (Flask + Telegram bot in different threads)
+from sqlalchemy.orm import scoped_session
+session = scoped_session(Session)
 
 if __name__ == "__main__":
     print("Database tables created/updated successfully.")
