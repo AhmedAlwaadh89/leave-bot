@@ -104,6 +104,9 @@ async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, repl
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles /start command, showing main menu or starting registration."""
+    # Clear any pending invalid transactions
+    session.rollback()
+    
     user = update.effective_user
     employee = session.query(Employee).filter_by(telegram_id=user.id).first()
 
@@ -469,6 +472,9 @@ async def notify_managers_new_request(context, new_request):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Parses the CallbackQuery and shows the appropriate menu or action."""
+    # Clear any pending invalid transactions
+    session.rollback()
+    
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
