@@ -98,20 +98,23 @@ if __name__ == "__main__":
     print("Database tables created/updated successfully.")
 
 # Migration to add approved_by column if it doesn't exist
-from sqlalchemy import text
-try:
-    with engine.connect() as conn:
-        with conn.begin():
-            # Check if column exists
-            result = conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name='leave_requests' AND column_name='approved_by'"
-            ))
-            if not result.fetchone():
-                print("Migrating: Adding approved_by column to leave_requests...")
-                conn.execute(text("ALTER TABLE leave_requests ADD COLUMN approved_by VARCHAR"))
-                print("Migration successful.")
-            else:
-                print("Column approved_by already exists.")
-except Exception as e:
-    print(f"Migration check failed: {e}")
+def run_migrations():
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            with conn.begin():
+                # Check if column exists
+                result = conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name='leave_requests' AND column_name='approved_by'"
+                ))
+                if not result.fetchone():
+                    print("Migrating: Adding approved_by column to leave_requests...")
+                    conn.execute(text("ALTER TABLE leave_requests ADD COLUMN approved_by VARCHAR"))
+                    print("Migration successful.")
+                else:
+                    print("Column approved_by already exists.")
+    except Exception as e:
+        print(f"Migration check failed: {e}")
+
+run_migrations()

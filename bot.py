@@ -376,13 +376,19 @@ async def replacement_employee_handler(update: Update, context: ContextTypes.DEF
     ]
     
     try:
-        time_info = ""
         if context.user_data.get('leave_type') == 'بالساعة' and context.user_data.get('start_time') and context.user_data.get('end_time'):
-             time_info = f"\nمن الساعة: {context.user_data.get('start_time').strftime('%H:%M')} إلى الساعة: {context.user_data.get('end_time').strftime('%H:%M')}"
+             # Hourly leave format
+             date_str = context.user_data.get('start_date').strftime('%Y-%m-%d')
+             start_t = context.user_data.get('start_time').strftime('%H:%M')
+             end_t = context.user_data.get('end_time').strftime('%H:%M')
+             msg_text = f"طلب بديل: الموظف {requester.full_name} يطلب منك أن تكون بديلاً له في إجازته يوم {date_str} من الساعة {start_t} إلى الساعة {end_t}."
+        else:
+             # Daily leave format
+             msg_text = f"طلب بديل: الموظف {requester.full_name} يطلب منك أن تكون بديلاً له في إجازته من {new_request.start_date} إلى {new_request.end_date}."
 
         await context.bot.send_message(
             chat_id=replacement.telegram_id,
-            text=f"طلب بديل: الموظف {requester.full_name} يطلب منك أن تكون بديلاً له في إجازته من {new_request.start_date} إلى {new_request.end_date}.{time_info}\nالسبب: {new_request.reason}",
+            text=msg_text,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         await query.edit_message_text(f"تم إرسال الطلب للموظف البديل {replacement.full_name}. بانتظار موافقته...")
@@ -494,9 +500,13 @@ async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, reques
     """Notifies all managers about a new leave request."""
     managers = session.query(Employee).filter_by(is_manager=True).all()
     
-    time_info = ""
     if request.leave_type == 'بالساعة' and request.start_time and request.end_time:
-        time_info = f"\nمن الساعة: {request.start_time.strftime('%H:%M')} إلى الساعة: {request.end_time.strftime('%H:%M')}"
+        date_str = request.start_date.strftime('%Y-%m-%d')
+        start_t = request.start_time.strftime('%H:%M')
+        end_t = request.end_time.strftime('%H:%M')
+        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nالتاريخ: {date_str}\nالوقت: من {start_t} إلى {end_t}\nالسبب: {request.reason}"
+    else:
+        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nمن: {request.start_date} إلى: {request.end_date}\nالسبب: {request.reason}"
 
     keyboard = [
         [
@@ -509,7 +519,7 @@ async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, reques
         try:
             await context.bot.send_message(
                 chat_id=manager.telegram_id,
-                text=f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nمن: {request.start_date} إلى: {request.end_date}{time_info}\nالسبب: {request.reason}",
+                text=msg_text,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
