@@ -894,7 +894,6 @@ def main() -> None:
             REPLACEMENT_EMPLOYEE: [CallbackQueryHandler(replacement_employee_handler, pattern='^rep_')]
         },
         fallbacks=[
-            CallbackQueryHandler(replacement_response_handler, pattern='^rep_(accept|reject)_'),
             CallbackQueryHandler(cancel_leave, pattern='^cancel_leave$'),
             CommandHandler("cancel", cancel),
             CommandHandler("start", start) # Allow restarting
