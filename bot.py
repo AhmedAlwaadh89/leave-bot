@@ -466,7 +466,13 @@ async def submit_leave_request(update_or_query, context: ContextTypes.DEFAULT_TY
     # Clear any pending invalid transactions
     session.rollback()
     
-    user_id = update_or_query.effective_user.id
+    # Handle both Update and CallbackQuery objects
+    if hasattr(update_or_query, 'effective_user'):
+        user_id = update_or_query.effective_user.id
+    else:
+        # It's a CallbackQuery
+        user_id = update_or_query.from_user.id
+    
     employee = session.query(Employee).filter_by(telegram_id=user_id).first()
 
     try:
@@ -613,45 +619,50 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
+    elif query.data == 'admin_export_report':
         # Export all leaves (approved, rejected, pending) to Excel
-        leaves = session.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
-        
-        if not leaves:
-            await query.edit_message_text("لا يوجد إجازات لتصديرها.")
-            return
+        try:
+            leaves = session.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
+            
+            if not leaves:
+                await query.edit_message_text("لا يوجد إجازات لتصديرها.")
+                return
 
-        data = []
-        for leave in leaves:
-            status_map = {'approved': 'مقبولة', 'rejected': 'مرفوضة', 'pending': 'قيد الانتظار'}
-            data.append({
-                'ID': leave.id,
-                'الموظف': leave.employee.full_name,
-                'النوع': leave.leave_type,
-                'الحالة': status_map.get(leave.status, leave.status),
-                'من': leave.start_date,
-                'إلى': leave.end_date,
-                'من ساعة': leave.start_time.strftime('%H:%M') if leave.start_time else '-',
-                'إلى ساعة': leave.end_time.strftime('%H:%M') if leave.end_time else '-',
-                'السبب': leave.reason,
-                'البديل': leave.replacement_employee.full_name if leave.replacement_employee else 'لا يوجد',
-                'تمت الموافقة بواسطة': leave.approved_by if leave.approved_by else '-'
-            })
-        
-        df = pd.DataFrame(data)
-        
-        # Save to BytesIO
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='All Leaves')
-        output.seek(0)
-        
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=output,
-            filename=f"leaves_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            caption="📊 تقرير جميع الإجازات"
-        )
-        await query.edit_message_text("تم إرسال التقرير بنجاح.")
+            data = []
+            for leave in leaves:
+                status_map = {'approved': 'مقبولة', 'rejected': 'مرفوضة', 'pending': 'قيد الانتظار'}
+                data.append({
+                    'ID': leave.id,
+                    'الموظف': leave.employee.full_name,
+                    'النوع': leave.leave_type,
+                    'الحالة': status_map.get(leave.status, leave.status),
+                    'من': leave.start_date,
+                    'إلى': leave.end_date,
+                    'من ساعة': leave.start_time.strftime('%H:%M') if leave.start_time else '-',
+                    'إلى ساعة': leave.end_time.strftime('%H:%M') if leave.end_time else '-',
+                    'السبب': leave.reason,
+                    'البديل': leave.replacement_employee.full_name if leave.replacement_employee else 'لا يوجد',
+                    'تمت الموافقة بواسطة': leave.approved_by if leave.approved_by else '-'
+                })
+            
+            df = pd.DataFrame(data)
+            
+            # Save to BytesIO
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='All Leaves')
+            output.seek(0)
+            
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=output,
+                filename=f"leaves_report_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+                caption="📊 تقرير جميع الإجازات"
+            )
+            await query.answer("تم إرسال التقرير بنجاح ✅")
+        except Exception as e:
+            logger.error(f"Error exporting report: {e}")
+            await query.answer("حدث خطأ في تصدير التقرير", show_alert=True)
 
     elif query.data.startswith('admin_approve_'):
         req_id = int(query.data.split('_')[2])
