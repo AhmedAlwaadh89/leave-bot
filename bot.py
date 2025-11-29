@@ -172,6 +172,7 @@ async def department_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("تم تسجيلك كأول مستخدم وتعيينك كمدير. أهلاً بك!")
         keyboard = get_main_menu_keyboard(user.id)
         await update.message.reply_text("اختر أحد الخيارات للبدء:", reply_markup=keyboard)
+        return MAIN_MENU  # First user (manager) goes to main menu
     else:
         await update.message.reply_text("شكراً لتسجيلك. تم إرسال طلبك للإدارة للموافقة. سيتم إعلامك عند الموافقة.")
         
@@ -186,8 +187,8 @@ async def department_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"الموظف الجديد *{full_name}* (ID: `{new_employee.id}`) من قسم *{department}* ينتظر الموافقة.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-
-    return MAIN_MENU # Transition to main menu state for all new users
+        
+        return ConversationHandler.END  # Pending users end conversation until approved
 
 # --- New Leave Conversation Handlers ---
 
