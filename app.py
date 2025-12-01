@@ -25,12 +25,30 @@ if token:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
+        # Add a small delay to allow previous instances to close
+        import time
+        time.sleep(2)
+        
         import bot as bot_module
-        bot_module.main()
-    
+        try:
+            bot_module.main()
+        except Exception as e:
+            print(f"Error running bot: {e}")
+
+    # Start Scheduler
+    def start_scheduler():
+        from scheduler import run_scheduler
+        run_scheduler()
+
+    # Only start threads if not already running (basic check)
+    # Note: In gunicorn with workers=1, this runs once per worker.
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
     print("Telegram bot started in background thread.")
+
+    scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
+    scheduler_thread.start()
+    print("Scheduler started in background thread.")
 # -------------------------
 
 # --- Basic Authentication ---

@@ -912,15 +912,6 @@ def main() -> None:
     # The replacement employee is not in the conversation, so this must be global
     application.add_handler(CallbackQueryHandler(replacement_response_handler, pattern='^rep_(accept|reject)_'))
 
-    # Start the monthly leave balance renewal scheduler in a background thread
-    try:
-        from scheduler import run_scheduler
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-        scheduler_thread.start()
-        logger.info("Monthly leave balance renewal scheduler started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start scheduler: {e}")
-
     application.run_polling(stop_signals=None, close_loop=False)
 
 if __name__ == "__main__":
