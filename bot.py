@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-import threading
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
 import io
@@ -767,6 +766,9 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             user = session.get(Employee, user_to_approve_id)
             if user and user.status == 'pending':
                 user.status = 'approved'
+                # Grant initial leave balance from monthly quotas
+                user.daily_leave_balance = user.monthly_daily_leave_quota
+                user.hourly_leave_balance = user.monthly_hourly_leave_quota
                 session.commit()
                 await query.edit_message_text(f"تمت الموافقة على {user.full_name}.")
                 await context.bot.send_message(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. اضغط /start للبدء.")
