@@ -4,87 +4,135 @@
 <div class="row mb-4">
     <div class="col-md-12">
         <div class="card">
-            <div class="card-header bg-white">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <h4 class="mb-0">📋 طلبات الإجازة الحديثة</h4>
+                <button id="deleteSelectedBtn" class="btn btn-danger btn-sm" style="display: none;"
+                    onclick="deleteSelected()">
+                    🗑️ حذف المحدد (<span id="selectedCount">0</span>)
+                </button>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>الموظف</th>
-                                <th>القسم</th>
-                                <th>النوع</th>
-                                <th>التفاصيل</th>
-                                <th>السبب</th>
-                                <th>البديل / الحالة</th>
-                                <th>حالة الطلب</th>
-                                <th>الإجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for request in requests %}
-                            <tr>
-                                <td>#{{ request.id }}</td>
-                                <td>{{ request.employee.full_name }}</td>
-                                <td><span class="badge bg-secondary">{{ request.employee.department or 'غير محدد'
-                                        }}</span></td>
-                                <td>{{ request.leave_type }}</td>
-                                <td>
-                                    {% if request.leave_type == 'يومية' %}
-                                    <small class="text-muted">من:</small> {{ request.start_date }}<br>
-                                    <small class="text-muted">إلى:</small> {{ request.end_date }}
-                                    {% else %}
-                                    {{ request.start_date }}<br>
-                                    <small class="text-muted">{{ request.start_time.strftime('%H:%M') }} - {{
-                                        request.end_time.strftime('%H:%M') }}</small>
-                                    {% endif %}
-                                </td>
-                                <td>{{ request.reason }}</td>
-                                <td>
-                                    {% if request.replacement_employee %}
-                                    {{ request.replacement_employee.full_name }}
-                                    <br>
-                                    {% if request.replacement_approval_status == 'accepted' %}
-                                    <span class="badge bg-success">وافق</span>
-                                    {% elif request.replacement_approval_status == 'rejected' %}
-                                    <span class="badge bg-danger">رفض</span>
-                                    {% else %}
-                                    <span class="badge bg-warning text-dark">انتظار</span>
-                                    {% endif %}
-                                    {% else %}
-                                    <span class="text-muted">-</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if request.status == 'pending' %}
-                                    <span class="badge bg-warning text-dark">قيد المراجعة</span>
-                                    {% elif request.status == 'approved' %}
-                                    <span class="badge bg-success">مقبول</span>
-                                    {% else %}
-                                    <span class="badge bg-danger">مرفوض</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <div class="btn-group btn-group-sm">
-                                        {% if request.status == 'pending' %}
-                                        <a href="{{ url_for('approve_request', request_id=request.id) }}"
-                                            class="btn btn-success" title="موافقة">✅</a>
-                                        <a href="{{ url_for('reject_request', request_id=request.id) }}"
-                                            class="btn btn-danger" title="رفض">❌</a>
+                    <form id="bulkDeleteForm" method="POST" action="{{ url_for('bulk_delete_requests') }}">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>
+                                        <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)">
+                                    </th>
+                                    <th>ID</th>
+                                    <th>الموظف</th>
+                                    <th>القسم</th>
+                                    <th>النوع</th>
+                                    <th>التفاصيل</th>
+                                    <th>السبب</th>
+                                    <th>البديل / الحالة</th>
+                                    <th>حالة الطلب</th>
+                                    <th>الإجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for request in requests %}
+                                <tr>
+                                    <td>
+                                        <input type="checkbox" name="request_ids" value="{{ request.id }}"
+                                            class="request-checkbox" onclick="updateSelectedCount()">
+                                    </td>
+                                    <td>#{{ request.id }}</td>
+                                    <td>{{ request.employee.full_name }}</td>
+                                    <td><span class="badge bg-secondary">{{ request.employee.department or 'غير محدد'
+                                            }}</span></td>
+                                    <td>{{ request.leave_type }}</td>
+                                    <td>
+                                        {% if request.leave_type == 'يومية' %}
+                                        <small class="text-muted">من:</small> {{ request.start_date }}<br>
+                                        <small class="text-muted">إلى:</small> {{ request.end_date }}
+                                        {% else %}
+                                        {{ request.start_date }}<br>
+                                        <small class="text-muted">{{ request.start_time.strftime('%H:%M') }} - {{
+                                            request.end_time.strftime('%H:%M') }}</small>
                                         {% endif %}
-                                        <a href="{{ url_for('edit_request', request_id=request.id) }}"
-                                            class="btn btn-primary" title="تعديل">✏️</a>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                    </td>
+                                    <td>{{ request.reason }}</td>
+                                    <td>
+                                        {% if request.replacement_employee %}
+                                        {{ request.replacement_employee.full_name }}
+                                        <br>
+                                        {% if request.replacement_approval_status == 'accepted' %}
+                                        <span class="badge bg-success">وافق</span>
+                                        {% elif request.replacement_approval_status == 'rejected' %}
+                                        <span class="badge bg-danger">رفض</span>
+                                        {% else %}
+                                        <span class="badge bg-warning text-dark">انتظار</span>
+                                        {% endif %}
+                                        {% else %}
+                                        <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if request.status == 'pending' %}
+                                        <span class="badge bg-warning text-dark">قيد المراجعة</span>
+                                        {% elif request.status == 'approved' %}
+                                        <span class="badge bg-success">مقبول</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">مرفوض</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            {% if request.status == 'pending' %}
+                                            <a href="{{ url_for('approve_request', request_id=request.id) }}"
+                                                class="btn btn-success" title="موافقة">✅</a>
+                                            <a href="{{ url_for('reject_request', request_id=request.id) }}"
+                                                class="btn btn-danger" title="رفض">❌</a>
+                                            {% endif %}
+                                            <a href="{{ url_for('edit_request', request_id=request.id) }}"
+                                                class="btn btn-primary" title="تعديل">✏️</a>
+                                            <a href="{{ url_for('delete_request', request_id=request.id) }}"
+                                                class="btn btn-outline-danger" title="حذف"
+                                                onclick="return confirm('هل أنت متأكد من حذف هذا الطلب؟')">🗑️</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </form>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+    function toggleSelectAll(checkbox) {
+        const checkboxes = document.querySelectorAll('.request-checkbox');
+        checkboxes.forEach(cb => cb.checked = checkbox.checked);
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        const checkboxes = document.querySelectorAll('.request-checkbox:checked');
+        const count = checkboxes.length;
+        document.getElementById('selectedCount').textContent = count;
+        document.getElementById('deleteSelectedBtn').style.display = count > 0 ? 'block' : 'none';
+
+        // Update "select all" checkbox
+        const allCheckboxes = document.querySelectorAll('.request-checkbox');
+        const selectAllCheckbox = document.getElementById('selectAll');
+        selectAllCheckbox.checked = count === allCheckboxes.length && count > 0;
+    }
+
+    function deleteSelected() {
+        const checkboxes = document.querySelectorAll('.request-checkbox:checked');
+        if (checkboxes.length === 0) {
+            alert('الرجاء تحديد طلب واحد على الأقل للحذف');
+            return;
+        }
+
+        if (confirm(`هل أنت متأكد من حذف ${checkboxes.length} طلب(ات)؟`)) {
+            document.getElementById('bulkDeleteForm').submit();
+        }
+    }
+</script>
 {% endblock %}

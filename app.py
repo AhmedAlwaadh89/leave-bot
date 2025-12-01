@@ -155,6 +155,35 @@ def reject_request(request_id):
         send_notification(leave_request.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {request_id}).")
     return redirect(url_for('index'))
 
+@app.route('/delete/<int:request_id>')
+@requires_auth
+def delete_request(request_id):
+    leave_request = session.get(LeaveRequest, request_id)
+    if leave_request:
+        employee_id = leave_request.employee.telegram_id
+        session.delete(leave_request)
+        session.commit()
+        flash("تم حذف الطلب بنجاح.", "success")
+        send_notification(employee_id, f"تم حذف طلب الإجازة رقم {request_id}.")
+    return redirect(url_for('index'))
+
+@app.route('/bulk_delete_requests', methods=['POST'])
+@requires_auth
+def bulk_delete_requests():
+    request_ids = request.form.getlist('request_ids')
+    if request_ids:
+        deleted_count = 0
+        for req_id in request_ids:
+            leave_req = session.get(LeaveRequest, int(req_id))
+            if leave_req:
+                session.delete(leave_req)
+                deleted_count += 1
+        session.commit()
+        flash(f"تم حذف {deleted_count} طلب(ات) بنجاح.", "success")
+    else:
+        flash("لم يتم تحديد أي طلبات للحذف.", "error")
+    return redirect(url_for('index'))
+
 @app.route('/edit_request/<int:request_id>', methods=['GET', 'POST'])
 @requires_auth
 def edit_request(request_id):
