@@ -555,6 +555,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("حسابك قيد المراجعة. لا يمكنك القيام بأي إجراء حالياً.")
         return MAIN_MENU
 
+    # Handle replacement response buttons (delegate to global handler)
+    if query.data.startswith('rep_accept_') or query.data.startswith('rep_reject_'):
+        return await replacement_response_handler(update, context)
+
     # Main Menu navigation
     if query.data == 'main_menu':
         keyboard = get_main_menu_keyboard(user_id)

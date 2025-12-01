@@ -19,8 +19,6 @@
                                 <th>مدير؟</th>
                                 <th>رصيد أيام</th>
                                 <th>رصيد ساعات</th>
-                                <th>رصيد شهري (أيام)</th>
-                                <th>رصيد شهري (ساعات)</th>
                                 <th>تحديث البيانات</th>
                                 <th>الإجراءات</th>
                             </tr>
@@ -55,12 +53,6 @@
                                     <td><input type="number" step="0.5" name="hourly_balance"
                                             class="form-control form-control-sm"
                                             value="{{ employee.hourly_leave_balance }}" style="width: 80px;"></td>
-                                    <td><input type="number" step="0.5" name="monthly_daily_quota"
-                                            class="form-control form-control-sm"
-                                            value="{{ employee.monthly_daily_leave_quota }}" style="width: 80px;" title="الرصيد الشهري الافتراضي للأيام"></td>
-                                    <td><input type="number" step="0.5" name="monthly_hourly_quota"
-                                            class="form-control form-control-sm"
-                                            value="{{ employee.monthly_hourly_leave_quota }}" style="width: 80px;" title="الرصيد الشهري الافتراضي للساعات"></td>
                                     <td>
                                         <button type="submit" class="btn btn-primary btn-sm">حفظ</button>
                                     </td>
