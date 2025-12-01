@@ -13,6 +13,12 @@ from database import session, LeaveRequest, Employee, Holiday
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key")
 
+# Error handler to show details in production (for debugging)
+import traceback
+@app.errorhandler(500)
+def internal_error(error):
+    return f"<pre>{traceback.format_exc()}</pre>", 500
+
 # --- Telegram Bot Setup ---
 bot = None
 token = os.getenv("TELEGRAM_BOT_TOKEN")
