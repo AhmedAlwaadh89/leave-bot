@@ -14,6 +14,9 @@ class Employee(Base):
     status = Column(String, default='pending')
     daily_leave_balance = Column(Float, default=0.0)
     hourly_leave_balance = Column(Float, default=0.0)
+    # Monthly quota fields - default 2 days and 4 hours per month
+    monthly_daily_leave_quota = Column(Float, default=2.0)
+    monthly_hourly_leave_quota = Column(Float, default=4.0)
     leave_requests = relationship("LeaveRequest", back_populates="employee", foreign_keys="[LeaveRequest.employee_id]")
     replacement_for = relationship("LeaveRequest", back_populates="replacement_employee", foreign_keys="[LeaveRequest.replacement_employee_id]")
 
@@ -100,21 +103,83 @@ if __name__ == "__main__":
 # Migration to add approved_by column if it doesn't exist
 def run_migrations():
     from sqlalchemy import text
+    
+    # Detect database type
+    db_type = engine.dialect.name
+    
     try:
         with engine.connect() as conn:
             with conn.begin():
-                # Check if column exists
-                result = conn.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name='leave_requests' AND column_name='approved_by'"
-                ))
-                if not result.fetchone():
-                    print("Migrating: Adding approved_by column to leave_requests...")
-                    conn.execute(text("ALTER TABLE leave_requests ADD COLUMN approved_by VARCHAR"))
-                    print("Migration successful.")
-                else:
-                    print("Column approved_by already exists.")
+                if db_type == 'postgresql':
+                    # PostgreSQL migrations
+                    # Check if approved_by column exists
+                    result = conn.execute(text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='leave_requests' AND column_name='approved_by'"
+                    ))
+                    if not result.fetchone():
+                        print("Migrating: Adding approved_by column to leave_requests...")
+                        conn.execute(text("ALTER TABLE leave_requests ADD COLUMN approved_by VARCHAR"))
+                        print("Migration successful.")
+                    else:
+                        print("Column approved_by already exists.")
+                    
+                    # Check if monthly quota columns exist
+                    result = conn.execute(text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='employees' AND column_name='monthly_daily_leave_quota'"
+                    ))
+                    if not result.fetchone():
+                        print("Migrating: Adding monthly_daily_leave_quota column to employees...")
+                        conn.execute(text("ALTER TABLE employees ADD COLUMN monthly_daily_leave_quota FLOAT DEFAULT 2.0"))
+                        print("Migration successful.")
+                    else:
+                        print("Column monthly_daily_leave_quota already exists.")
+                    
+                    result = conn.execute(text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='employees' AND column_name='monthly_hourly_leave_quota'"
+                    ))
+                    if not result.fetchone():
+                        print("Migrating: Adding monthly_hourly_leave_quota column to employees...")
+                        conn.execute(text("ALTER TABLE employees ADD COLUMN monthly_hourly_leave_quota FLOAT DEFAULT 4.0"))
+                        print("Migration successful.")
+                    else:
+                        print("Column monthly_hourly_leave_quota already exists.")
+                        
+                elif db_type == 'sqlite':
+                    # SQLite migrations (different approach)
+                    # Check for approved_by column
+                    result = conn.execute(text("PRAGMA table_info(leave_requests)"))
+                    columns = [row[1] for row in result.fetchall()]
+                    
+                    if 'approved_by' not in columns:
+                        print("Migrating: Adding approved_by column to leave_requests...")
+                        conn.execute(text("ALTER TABLE leave_requests ADD COLUMN approved_by VARCHAR"))
+                        print("Migration successful.")
+                    else:
+                        print("Column approved_by already exists.")
+                    
+                    # Check for monthly quota columns
+                    result = conn.execute(text("PRAGMA table_info(employees)"))
+                    columns = [row[1] for row in result.fetchall()]
+                    
+                    if 'monthly_daily_leave_quota' not in columns:
+                        print("Migrating: Adding monthly_daily_leave_quota column to employees...")
+                        conn.execute(text("ALTER TABLE employees ADD COLUMN monthly_daily_leave_quota FLOAT DEFAULT 2.0"))
+                        print("Migration successful.")
+                    else:
+                        print("Column monthly_daily_leave_quota already exists.")
+                    
+                    if 'monthly_hourly_leave_quota' not in columns:
+                        print("Migrating: Adding monthly_hourly_leave_quota column to employees...")
+                        conn.execute(text("ALTER TABLE employees ADD COLUMN monthly_hourly_leave_quota FLOAT DEFAULT 4.0"))
+                        print("Migration successful.")
+                    else:
+                        print("Column monthly_hourly_leave_quota already exists.")
+                        
     except Exception as e:
         print(f"Migration check failed: {e}")
 
 run_migrations()
+

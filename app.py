@@ -181,6 +181,8 @@ def update_user(user_id):
         user.is_manager = 'is_manager' in request.form
         user.daily_leave_balance = float(request.form['daily_balance'])
         user.hourly_leave_balance = float(request.form['hourly_balance'])
+        user.monthly_daily_leave_quota = float(request.form.get('monthly_daily_quota', 2.0))
+        user.monthly_hourly_leave_quota = float(request.form.get('monthly_hourly_quota', 4.0))
         session.commit()
         flash(f"تم تحديث بيانات الموظف {user.full_name} بنجاح.", "success")
     return redirect(url_for('manage_employees'))

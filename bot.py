@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import threading
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
 import io
@@ -507,13 +508,16 @@ async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, reques
     """Notifies all managers about a new leave request."""
     managers = session.query(Employee).filter_by(is_manager=True).all()
     
+    # Check if there's a replacement employee
+    replacement_text = "بدون بديل" if not request.replacement_employee_id else f"البديل: {request.replacement_employee.full_name}"
+    
     if request.leave_type == 'بالساعة' and request.start_time and request.end_time:
         date_str = request.start_date.strftime('%Y-%m-%d')
         start_t = request.start_time.strftime('%H:%M')
         end_t = request.end_time.strftime('%H:%M')
-        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nالتاريخ: {date_str}\nالوقت: من {start_t} إلى {end_t}\nالسبب: {request.reason}"
+        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nالتاريخ: {date_str}\nالوقت: من {start_t} إلى {end_t}\nالسبب: {request.reason}\n{replacement_text}"
     else:
-        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nمن: {request.start_date} إلى: {request.end_date}\nالسبب: {request.reason}"
+        msg_text = f"طلب إجازة جديد:\nالموظف: {request.employee.full_name}\nالنوع: {request.leave_type}\nمن: {request.start_date} إلى: {request.end_date}\nالسبب: {request.reason}\n{replacement_text}"
 
     keyboard = [
         [
@@ -737,13 +741,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard_buttons.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard_buttons), parse_mode=ParseMode.MARKDOWN)
 
-    # Handling user approval/rejection
-    # Handling user approval/rejection - MOVED TO GLOBAL HANDLER
+    # Handling user approval/rejection - delegate to global handler
     elif query.data.startswith('approve_user_') or query.data.startswith('reject_user_'):
-         # This part is now handled by global_admin_handler, but we keep it here just in case
-         # to avoid "query not answered" if it falls through.
-         # Actually, better to remove it from here to avoid double handling if we register the global one correctly.
-         pass
+         return await global_admin_handler(update, context)
 
 # --- Global Admin Handlers ---
 
@@ -911,6 +911,15 @@ def main() -> None:
     # Register global handler for replacement responses
     # The replacement employee is not in the conversation, so this must be global
     application.add_handler(CallbackQueryHandler(replacement_response_handler, pattern='^rep_(accept|reject)_'))
+
+    # Start the monthly leave balance renewal scheduler in a background thread
+    try:
+        from scheduler import run_scheduler
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        logger.info("Monthly leave balance renewal scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
 
     application.run_polling(stop_signals=None, close_loop=False)
 
