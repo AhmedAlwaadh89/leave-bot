@@ -13,6 +13,10 @@ from database import session, LeaveRequest, Employee, Holiday
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key")
 
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    session.remove()
+
 # --- Telegram Bot Setup ---
 bot = None
 token = os.getenv("TELEGRAM_BOT_TOKEN")
