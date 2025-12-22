@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, Date, Time, Float, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, Date, Time, Float, ForeignKey, BigInteger
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -7,7 +7,7 @@ Base = declarative_base()
 class Employee(Base):
     __tablename__ = 'employees'
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
     full_name = Column(String, nullable=False)
     department = Column(String, nullable=True) # New field
     is_manager = Column(Boolean, default=False)
@@ -42,8 +42,8 @@ class NotificationLog(Base):
     id = Column(Integer, primary_key=True)
     request_type = Column(String, nullable=False) # 'leave' or 'user'
     target_id = Column(Integer, nullable=False)  # leave_request_id or employee_id
-    manager_telegram_id = Column(Integer, nullable=False)
-    message_id = Column(Integer, nullable=False)
+    manager_telegram_id = Column(BigInteger, nullable=False)
+    message_id = Column(BigInteger, nullable=False)
 
 class Holiday(Base):
     """New table to store official holidays."""
@@ -154,6 +154,12 @@ def run_migrations():
                     if not result.fetchone():
                         print("Migrating: Adding department column to employees...")
                         conn.execute(text("ALTER TABLE employees ADD COLUMN department VARCHAR"))
+                    
+                    # Ensure telegram_id is BIGINT
+                    print("Migrating: Ensuring telegram_id columns are BIGINT...")
+                    conn.execute(text("ALTER TABLE employees ALTER COLUMN telegram_id TYPE BIGINT"))
+                    conn.execute(text("ALTER TABLE notification_logs ALTER COLUMN manager_telegram_id TYPE BIGINT"))
+                    conn.execute(text("ALTER TABLE notification_logs ALTER COLUMN message_id TYPE BIGINT"))
                         
                 elif db_type == 'sqlite':
                     # SQLite migrations
