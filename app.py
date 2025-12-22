@@ -143,9 +143,16 @@ def approve_request(request_id):
         employee.hourly_leave_balance -= hours_to_deduct
         
     leave_request.status = 'approved'
+    leave_request.approved_by = "Admin (Web)"
     session.commit()
     flash("تمت الموافقة على الطلب بنجاح.", "success")
-    send_notification(employee.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {request_id}).")
+    send_notification(employee.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {request_id}) من قبل الإدارة (Web).")
+    
+    # Notify all managers about the web approval
+    managers = session.query(Employee).filter_by(is_manager=True).all()
+    for mgr in managers:
+        send_notification(mgr.telegram_id, f"✅ تم الموافقة على طلب الإجازة (ID: {request_id}) للموظف {employee.full_name} من قبل الإدارة (Web).")
+        
     return redirect(url_for('index'))
 
 @app.route('/reject/<int:request_id>')
@@ -260,6 +267,46 @@ def reject_user_web(user_id):
         session.delete(user)
         session.commit()
         flash(f"تم حذف الموظف {user.full_name}.", "success")
+    return redirect(url_for('manage_employees'))
+
+@app.route('/add_user', methods=['POST'])
+@requires_auth
+def add_user_web():
+    telegram_id = request.form.get('telegram_id')
+    full_name = request.form.get('full_name')
+    department = request.form.get('department')
+    is_manager = 'is_manager' in request.form
+    
+    if not telegram_id or not full_name:
+        flash("يرجى ملء جميع الحقول المطلوبة (Telegram ID والاسم).", "error")
+        return redirect(url_for('manage_employees'))
+        
+    try:
+        telegram_id = int(telegram_id)
+        # Check if already exists
+        existing = session.query(Employee).filter_by(telegram_id=telegram_id).first()
+        if existing:
+            flash(f"الموظف بـ ID {telegram_id} موجود مسبقاً باسم {existing.full_name}.", "error")
+            return redirect(url_for('manage_employees'))
+            
+        new_emp = Employee(
+            telegram_id=telegram_id,
+            full_name=full_name,
+            department=department,
+            status='approved',
+            is_manager=is_manager,
+            daily_leave_balance=2.0,
+            hourly_leave_balance=4.0
+        )
+        session.add(new_emp)
+        session.commit()
+        flash(f"تم إضافة الموظف {full_name} بنجاح.", "success")
+    except ValueError:
+        flash("Telegram ID يجب أن يكون رقماً.", "error")
+    except Exception as e:
+        session.rollback()
+        flash(f"حدث خطأ أثناء الإضافة: {e}", "error")
+        
     return redirect(url_for('manage_employees'))
 
 @app.route('/holidays')

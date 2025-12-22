@@ -20,7 +20,7 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 import dateparser
-from database import session, Employee, LeaveRequest
+from database import session, Employee, LeaveRequest, NotificationLog
 
 # Setup logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 (
     FULL_NAME, DEPARTMENT, LEAVE_TYPE, LEAVE_START_DATE, LEAVE_END_DATE,
     LEAVE_START_TIME, LEAVE_END_TIME, LEAVE_REASON, REPLACEMENT_EMPLOYEE,
-    MAIN_MENU
-) = range(10)
+    MAIN_MENU,
+    # New Admin States
+    ADMIN_ADD_EMP_ID, ADMIN_ADD_EMP_NAME, ADMIN_ADD_EMP_DEPT
+) = range(13)
 
 # --- Helper Functions & Keyboards ---
 
@@ -73,11 +75,12 @@ def get_admin_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("مراجعة الطلبات", callback_data='admin_review_leaves')],
         [InlineKeyboardButton("إدارة الموظفين", callback_data='admin_manage_employees')],
+        [InlineKeyboardButton("➕ إضافة موظف جديد", callback_data='admin_add_employee')],
         [InlineKeyboardButton("📊 تقرير الإجازات", callback_data='admin_export_report')],
         [InlineKeyboardButton("القائمة الرئيسية", callback_data='main_menu')]
     ])
 
-async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, reply_markup: InlineKeyboardMarkup = None):
+async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, reply_markup: InlineKeyboardMarkup = None, request_type: str = None, target_id: int = None):
     logger.info("Attempting to notify managers...")
     managers = session.query(Employee).filter_by(is_manager=True, status='approved').all()
     
@@ -86,21 +89,27 @@ async def notify_managers(context: ContextTypes.DEFAULT_TYPE, message: str, repl
         return
         
     logger.info(f"Found {len(managers)} manager(s) to notify.")
-    logger.info(f"Found {len(managers)} manager(s) to notify.")
     
-    # Create tasks for all notifications to run in parallel
-    tasks = []
     for manager in managers:
-        tasks.append(context.bot.send_message(chat_id=manager.telegram_id, text=message, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup))
+        try:
+            sent_msg = await context.bot.send_message(
+                chat_id=manager.telegram_id, 
+                text=message, 
+                parse_mode=ParseMode.MARKDOWN, 
+                reply_markup=reply_markup
+            )
+            if request_type and target_id:
+                log = NotificationLog(
+                    request_type=request_type,
+                    target_id=target_id,
+                    manager_telegram_id=manager.telegram_id,
+                    message_id=sent_msg.message_id
+                )
+                session.add(log)
+        except Exception as e:
+            logger.error(f"Failed to send notification to manager {manager.telegram_id}: {e}")
     
-    # Run all tasks concurrently
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Failed to send notification to manager {managers[i].telegram_id}: {result}")
-            else:
-                logger.info(f"Sent notification to manager {managers[i].telegram_id}.")
+    session.commit()
 
 # --- Main Commands & Handlers ---
 
@@ -158,21 +167,27 @@ async def department_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     is_first = session.query(Employee).count() == 0
 
-    new_employee = Employee(
-        telegram_id=user.id,
-        full_name=full_name,
-        department=department,
-        is_manager=is_first,
-        status='approved' if is_first else 'pending'
-    )
-    session.add(new_employee)
-    session.commit()
+    try:
+        new_employee = Employee(
+            telegram_id=user.id,
+            full_name=full_name,
+            department=department,
+            is_manager=is_first,
+            status='approved' if is_first else 'pending'
+        )
+        session.add(new_employee)
+        session.commit()
+    except Exception as e:
+        logger.error(f"Error saving new employee: {e}")
+        session.rollback()
+        await update.message.reply_text("حدث خطأ أثناء حفظ بياناتك. يرجى المحاولة لاحقاً.")
+        return ConversationHandler.END
 
     if is_first:
         await update.message.reply_text("تم تسجيلك كأول مستخدم وتعيينك كمدير. أهلاً بك!")
         keyboard = get_main_menu_keyboard(user.id)
         await update.message.reply_text("اختر أحد الخيارات للبدء:", reply_markup=keyboard)
-        return MAIN_MENU  # First user (manager) goes to main menu
+        return MAIN_MENU
     else:
         await update.message.reply_text("شكراً لتسجيلك. تم إرسال طلبك للإدارة للموافقة. سيتم إعلامك عند الموافقة.")
         
@@ -185,10 +200,12 @@ async def department_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await notify_managers(
             context, 
             f"الموظف الجديد *{full_name}* (ID: `{new_employee.id}`) من قسم *{department}* ينتظر الموافقة.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            request_type='user',
+            target_id=new_employee.id
         )
         
-        return ConversationHandler.END  # Pending users end conversation until approved
+        return ConversationHandler.END
 
 # --- New Leave Conversation Handlers ---
 
@@ -527,13 +544,23 @@ async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, reques
     
     for manager in managers:
         try:
-            await context.bot.send_message(
+            sent_msg = await context.bot.send_message(
                 chat_id=manager.telegram_id,
                 text=msg_text,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            # Log the message ID for each manager
+            log = NotificationLog(
+                request_type='leave',
+                target_id=request.id,
+                manager_telegram_id=manager.telegram_id,
+                message_id=sent_msg.message_id
+            )
+            session.add(log)
         except Exception as e:
             logger.error(f"Failed to notify manager {manager.full_name}: {e}")
+    
+    session.commit()
 
 
 # --- Callback Query (Button) Handler ---
@@ -617,7 +644,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard = []
         for req in pending_requests:
             emp = req.employee
+            if req.leave_type == 'بالساعة' and req.start_time:
+                date_info = f"{req.start_date} ({req.start_time.strftime('%H:%M')} - {req.end_time.strftime('%H:%M')})"
+            else:
+                date_info = f"{req.start_date} إلى {req.end_date}"
+            
             message += f"- {emp.full_name} ({req.leave_type}) ID: `{req.id}`\n"
+            message += f"  📅 التاريخ: {date_info}\n"
             message += f"  💰 رصيد: {emp.daily_leave_balance} يوم | {emp.hourly_leave_balance} ساعة\n"
             keyboard.append([
                 InlineKeyboardButton(f"✅ موافقة {req.id}", callback_data=f"admin_approve_{req.id}"),
@@ -674,50 +707,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     elif query.data.startswith('admin_approve_'):
         req_id = int(query.data.split('_')[2])
-        req = session.get(LeaveRequest, req_id)
-        
-        # Get admin name
-        admin_id = query.from_user.id
-        admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
-        admin_name = admin.full_name if admin else f"Admin {admin_id}"
-
-        if req and req.status == 'pending':
-            # Deduct balance logic should ideally be shared, but for now simplistic:
-            # We should probably call the logic in app.py or duplicate it here.
-            # For safety, let's just mark approved and let the admin handle balance manually if needed, 
-            # OR implement the deduction logic here.
-            # Let's implement deduction here to match app.py logic.
-            
-            emp = req.employee
-            if req.leave_type == 'يومية':
-                # Calculate days (excluding Fri/Sat)
-                days = 0
-                curr = req.start_date
-                while curr <= req.end_date:
-                    if curr.weekday() not in [4, 5]: # Fri=4, Sat=5
-                        days += 1
-                    curr += timedelta(days=1)
-                
-                if emp.daily_leave_balance < days:
-                    await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                    return
-                emp.daily_leave_balance -= days
-            
-            elif req.leave_type == 'بالساعة':
-                # Calculate hours
-                duration = datetime.combine(date.today(), req.end_time) - datetime.combine(date.today(), req.start_time)
-                hours = duration.total_seconds() / 3600
-                if emp.hourly_leave_balance < hours:
-                    await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                    return
-                emp.hourly_leave_balance -= hours
-
-            req.status = 'approved'
-            session.commit()
-            await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
-            await context.bot.send_message(emp.telegram_id, f"تمت الموافقة على طلب الإجازة الخاص بك (ID: {req_id}).")
-        else:
-             await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
+        await approve_leave_logic(context, query, req_id, query.from_user.id)
 
     elif query.data.startswith('admin_reject_'):
         req_id = int(query.data.split('_')[2])
@@ -744,11 +734,149 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard_buttons.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard_buttons), parse_mode=ParseMode.MARKDOWN)
 
+    elif query.data == 'admin_add_employee':
+        if not is_manager(user_id):
+            await query.answer("ليس لديك صلاحيات المدير.", show_alert=True)
+            return MAIN_MENU
+        await query.edit_message_text("يرجى إرسال Telegram ID الخاص بالموظف الجديد (يجب أن يكون رقماً):")
+        return ADMIN_ADD_EMP_ID
+
     # Handling user approval/rejection - delegate to global handler
     elif query.data.startswith('approve_user_') or query.data.startswith('reject_user_'):
          return await global_admin_handler(update, context)
 
+# --- Manual Admin Employee Creation Handlers ---
+
+async def admin_add_employee_id_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        text = update.message.text.strip()
+        telegram_id = int(text)
+        
+        # Check if already exists
+        emp = session.query(Employee).filter_by(telegram_id=telegram_id).first()
+        if emp:
+            await update.message.reply_text("عذراً، هذا الموظف (أو Telegram ID) موجود مسبقاً في النظام. أدخل ID آخر أو /cancel:")
+            return ADMIN_ADD_EMP_ID
+        
+        context.user_data['add_emp_id'] = telegram_id
+        await update.message.reply_text("يرجى إدخال اسم الموظف الكامل:")
+        return ADMIN_ADD_EMP_NAME
+    except ValueError:
+        await update.message.reply_text("خطأ: يرجى إدخال Telegram ID صحيح (أرقام فقط). للمحاولة مجدداً أدخل الرقم أو /cancel للإلغاء:")
+        return ADMIN_ADD_EMP_ID
+
+async def admin_add_employee_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['add_emp_name'] = update.message.text.strip()
+    await update.message.reply_text("يرجى إدخال قسم الموظف:")
+    return ADMIN_ADD_EMP_DEPT
+
+async def admin_add_employee_dept_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    dept = update.message.text.strip()
+    telegram_id = context.user_data.get('add_emp_id')
+    full_name = context.user_data.get('add_emp_name')
+    
+    if not telegram_id or not full_name:
+        await update.message.reply_text("حدث خطأ في البيانات. يرجى المحاولة من جديد.")
+        return MAIN_MENU
+
+    try:
+        new_emp = Employee(
+            telegram_id=telegram_id,
+            full_name=full_name,
+            department=dept,
+            status='approved', # Approved immediately when added by admin
+            is_manager=False,
+            # Set initial balance (2 days and 4 hours are default in some parts of code)
+            daily_leave_balance=2.0,
+            hourly_leave_balance=4.0
+        )
+        session.add(new_emp)
+        session.commit()
+        await update.message.reply_text(f"✅ تم إضافة الموظف *{full_name}* بنجاح بصفة موظف معتمد.", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error creating employee by admin: {e}")
+        session.rollback()
+        await update.message.reply_text("❌ حدث خطأ أثناء حفظ البيانات.")
+    
+    context.user_data.clear()
+    user_id = update.effective_user.id
+    keyboard = get_main_menu_keyboard(user_id)
+    await update.message.reply_text("العودة للقائمة الرئيسية:", reply_markup=keyboard)
+    return MAIN_MENU
+
 # --- Global Admin Handlers ---
+
+async def approve_leave_logic(context: ContextTypes.DEFAULT_TYPE, query, req_id: int, admin_id: int):
+    """Shared logic for approving a leave request."""
+    req = session.get(LeaveRequest, req_id)
+    admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
+    admin_name = admin.full_name if admin else f"Admin {admin_id}"
+
+    if req and req.status == 'pending':
+        emp = req.employee
+        if req.leave_type == 'يومية':
+            # Calculate days (excluding Fri/Sat)
+            days = 0
+            curr = req.start_date
+            while curr <= req.end_date:
+                if curr.weekday() not in [4, 5]: # Fri=4, Sat=5
+                    days += 1
+                curr += timedelta(days=1)
+            
+            if emp.daily_leave_balance < days:
+                await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
+                return
+            emp.daily_leave_balance -= days
+        
+        elif req.leave_type == 'بالساعة':
+            # Calculate hours
+            duration = datetime.combine(date.today(), req.end_time) - datetime.combine(date.today(), req.start_time)
+            hours = duration.total_seconds() / 3600
+            if emp.hourly_leave_balance < hours:
+                await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
+                return
+            emp.hourly_leave_balance -= hours
+
+        req.status = 'approved'
+        req.approved_by = admin_name
+        session.commit()
+        
+        # Notify other managers and update/remove buttons
+        logs = session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).all()
+        
+        if req.leave_type == 'بالساعة' and req.start_time:
+            leave_details = f"يوم {req.start_date} من {req.start_time.strftime('%H:%M')} إلى {req.end_time.strftime('%H:%M')}"
+        else:
+            leave_details = f"من {req.start_date} إلى {req.end_date}"
+
+        approval_msg = f"✅ تم الموافقة على طلب الإجازة (ID: {req_id}) للموظف {emp.full_name} من قبل {admin_name}.\nالتفاصيل: {leave_details}"
+        
+        for log in logs:
+            try:
+                if log.manager_telegram_id == admin_id:
+                    # Update current admin's message
+                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
+                else:
+                    # Notify and update other managers
+                    await context.bot.send_message(chat_id=log.manager_telegram_id, text=approval_msg)
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=log.manager_telegram_id,
+                            message_id=log.message_id,
+                            text=f"✅ {approval_msg}"
+                        )
+                    except Exception:
+                        # Message might be too old or already deleted/edited
+                        pass
+            except Exception as e:
+                logger.error(f"Failed to update/notify manager {log.manager_telegram_id}: {e}")
+        
+        # Clean up logs for this request
+        session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).delete()
+        session.commit()
+
+    else:
+         await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
 
 async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles admin actions (approve/reject user/leave) globally."""
@@ -772,6 +900,24 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 session.commit()
                 await query.edit_message_text(f"تمت الموافقة على {user.full_name}.")
                 await context.bot.send_message(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. اضغط /start للبدء.")
+                
+                # Update other managers
+                logs = session.query(NotificationLog).filter_by(request_type='user', target_id=user_to_approve_id).all()
+                admin_mgr = session.query(Employee).filter_by(telegram_id=query.from_user.id).first()
+                admin_name = admin_mgr.full_name if admin_mgr else "مدير"
+                
+                for log in logs:
+                    if log.manager_telegram_id != query.from_user.id:
+                        try:
+                            await context.bot.edit_message_text(
+                                chat_id=log.manager_telegram_id,
+                                message_id=log.message_id,
+                                text=f"✅ تمت الموافقة على الموظف {user.full_name} من قبل {admin_name}."
+                            )
+                        except Exception:
+                            pass
+                session.query(NotificationLog).filter_by(request_type='user', target_id=user_to_approve_id).delete()
+                session.commit()
             else:
                 await query.edit_message_text("المستخدم غير موجود أو تمت الموافقة عليه مسبقاً.")
         
@@ -779,14 +925,37 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             user_to_reject_id = int(query.data.split('_')[2])
             user = session.get(Employee, user_to_reject_id)
             if user:
+                user_name = user.full_name
                 await context.bot.send_message(user.telegram_id, "نأسف، تم رفض طلب تسجيلك.")
                 session.delete(user)
                 session.commit()
-                await query.edit_message_text(f"تم رفض وحذف {user.full_name}.")
+                await query.edit_message_text(f"تم رفض وحذف {user_name}.")
+                
+                # Update other managers
+                logs = session.query(NotificationLog).filter_by(request_type='user', target_id=user_to_reject_id).all()
+                admin_mgr = session.query(Employee).filter_by(telegram_id=query.from_user.id).first()
+                admin_name = admin_mgr.full_name if admin_mgr else "مدير"
+
+                for log in logs:
+                    if log.manager_telegram_id != query.from_user.id:
+                        try:
+                            await context.bot.edit_message_text(
+                                chat_id=log.manager_telegram_id,
+                                message_id=log.message_id,
+                                text=f"❌ تم رفض الموظف {user_name} من قبل {admin_name}."
+                            )
+                        except Exception:
+                            pass
+                session.query(NotificationLog).filter_by(request_type='user', target_id=user_to_reject_id).delete()
+                session.commit()
             else:
                 await query.edit_message_text("المستخدم غير موجود.")
 
         elif query.data.startswith('admin_approve_'):
+            req_id = int(query.data.split('_')[2])
+            await approve_leave_logic(context, query, req_id, query.from_user.id)
+            
+        elif query.data.startswith('admin_reject_'):
             req_id = int(query.data.split('_')[2])
             req = session.get(LeaveRequest, req_id)
             
@@ -796,49 +965,13 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             admin_name = admin.full_name if admin else f"Admin {admin_id}"
 
             if req and req.status == 'pending':
-                emp = req.employee
-                if req.leave_type == 'يومية':
-                    days = 0
-                    curr = req.start_date
-                    while curr <= req.end_date:
-                        if curr.weekday() not in [4, 5]: 
-                            days += 1
-                        curr += timedelta(days=1)
-                    
-                    if emp.daily_leave_balance < days:
-                        await query.answer("رصيد الموظف غير كافٍ!", show_alert=True)
-                        return
-                    emp.daily_leave_balance -= days
-                    req.status = 'approved'
-                    req.approved_by = admin_name
-                    session.commit()
-                    
-                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
-                    await context.bot.send_message(emp.telegram_id, f"✅ تمت الموافقة على طلب إجازتك رقم {req.id}.")
-                
-                elif req.leave_type == 'بالساعة':
-                    # For simplicity, just approve for now without deduction logic or implement simple deduction
-                    # Assuming hourly_leave_balance is in hours
-                    # Calculate hours
-                    if req.start_time and req.end_time:
-                        # Simple hour diff
-                        t1 = datetime.combine(date.min, req.start_time)
-                        t2 = datetime.combine(date.min, req.end_time)
-                        diff = (t2 - t1).total_seconds() / 3600
-                        
-                        if emp.hourly_leave_balance < diff:
-                             await query.answer("رصيد الساعات غير كافٍ!", show_alert=True)
-                             return
-
-                        emp.hourly_leave_balance -= diff
-
-                    req.status = 'approved'
-                    req.approved_by = admin_name
-                    session.commit()
-                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة الساعية رقم {req.id} بواسطة {admin_name}.")
-                    await context.bot.send_message(emp.telegram_id, f"✅ تمت الموافقة على طلب إجازتك الساعية رقم {req.id}.")
+                req.status = 'rejected'
+                req.approved_by = admin_name
+                session.commit()
+                await query.edit_message_text(f"تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
+                await context.bot.send_message(req.employee.telegram_id, f"❌ تم رفض طلب إجازتك رقم {req.id}.")
             else:
-                 await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
+                await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
 
         elif query.data.startswith('admin_reject_'):
             req_id = int(query.data.split('_')[2])
@@ -898,7 +1031,12 @@ def main() -> None:
             LEAVE_START_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_start_time_handler)],
             LEAVE_END_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_end_time_handler)],
             LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_handler)],
-            REPLACEMENT_EMPLOYEE: [CallbackQueryHandler(replacement_employee_handler, pattern='^rep_')]
+            REPLACEMENT_EMPLOYEE: [CallbackQueryHandler(replacement_employee_handler, pattern='^rep_')],
+            
+            # New admin states for adding employee
+            ADMIN_ADD_EMP_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_id_handler)],
+            ADMIN_ADD_EMP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_name_handler)],
+            ADMIN_ADD_EMP_DEPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_dept_handler)],
         },
         fallbacks=[
             CallbackQueryHandler(cancel_leave, pattern='^cancel_leave$'),
