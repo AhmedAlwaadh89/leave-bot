@@ -445,6 +445,9 @@ async def replacement_response_handler(update: Update, context: ContextTypes.DEF
             # Notify Managers
             await notify_managers_new_request(context, leave_request)
             
+            # Also notify employee explicitly here if needed, but notify_managers_new_request is for admin
+            # The requester already got a message at line 443.
+            
         elif action == 'reject':
             leave_request.replacement_approval_status = 'rejected'
             leave_request.status = 'rejected' # Auto reject if replacement refuses? Or just cancel?
@@ -543,6 +546,10 @@ async def notify_managers_new_request(context: ContextTypes.DEFAULT_TYPE, reques
     ]
     
     for manager in managers:
+        # Don't notify the manager if they are the one requesting the leave
+        if manager.telegram_id == request.employee.telegram_id:
+            continue
+            
         try:
             sent_msg = await context.bot.send_message(
                 chat_id=manager.telegram_id,
@@ -581,9 +588,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("حسابك قيد المراجعة. لا يمكنك القيام بأي إجراء حالياً.")
         return MAIN_MENU
 
-    # Handle replacement response buttons (delegate to global handler)
+    # Handle replacement response buttons (Note: These are also handled by a global handler, 
+    # but we can keep it here if we ensure no double-processing. 
+    # To be safe, let's just return what the global handler would do or let it fall through.)
     if query.data.startswith('rep_accept_') or query.data.startswith('rep_reject_'):
-        return await replacement_response_handler(update, context)
+        # Just return and let the global handler handle it to avoid duplicate calls
+        return
 
     # Main Menu navigation
     if query.data == 'main_menu':
@@ -706,17 +716,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.answer("حدث خطأ في تصدير التقرير", show_alert=True)
 
     elif query.data.startswith('admin_approve_'):
+        # Call approval logic directly
+        if not is_manager(user_id):
+            await query.answer("ليس لديك صلاحيات المدير.", show_alert=True)
+            return MAIN_MENU
         req_id = int(query.data.split('_')[2])
-        await approve_leave_logic(context, query, req_id, query.from_user.id)
+        await approve_leave_logic(context, query, req_id, user_id)
+        return MAIN_MENU
 
     elif query.data.startswith('admin_reject_'):
+        # Call rejection logic directly
+        if not is_manager(user_id):
+            await query.answer("ليس لديك صلاحيات المدير.", show_alert=True)
+            return MAIN_MENU
+        
         req_id = int(query.data.split('_')[2])
         req = session.get(LeaveRequest, req_id)
+        
+        # Get admin name
+        admin = session.query(Employee).filter_by(telegram_id=user_id).first()
+        admin_name = admin.full_name if admin else f"مدير {user_id}"
+
         if req and req.status == 'pending':
             req.status = 'rejected'
+            req.approved_by = admin_name
             session.commit()
-            await query.edit_message_text(f"تم رفض طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
-            await context.bot.send_message(req.employee.telegram_id, f"تم رفض طلب الإجازة الخاص بك (ID: {req.id}).")
+            await query.edit_message_text(f"✅ تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.", reply_markup=get_admin_menu_keyboard())
+            
+            # Notify the employee
+            try:
+                emp = req.employee
+                rejection_msg = f"❌ نأسف، تم رفض طلب إجازتك رقم {req.id} من قبل {admin_name}."
+                print(f"[NOTIFICATION] Sending rejection notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+                logger.info(f"Sending rejection notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+                await context.bot.send_message(chat_id=emp.telegram_id, text=rejection_msg)
+                print(f"[NOTIFICATION] Successfully sent rejection notification to employee {emp.full_name}")
+                logger.info(f"Successfully sent rejection notification to employee {emp.full_name}")
+            except Exception as e:
+                print(f"[NOTIFICATION ERROR] Failed to notify employee of rejection: {e}")
+                logger.error(f"Failed to notify employee of rejection: {e}")
+        else:
+            await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
+        
+        return MAIN_MENU
     elif query.data == 'admin_manage_employees':
         pending = session.query(Employee).filter_by(status='pending').all()
         if not pending:
@@ -849,16 +891,31 @@ async def approve_leave_logic(context: ContextTypes.DEFAULT_TYPE, query, req_id:
         else:
             leave_details = f"من {req.start_date} إلى {req.end_date}"
 
+        # Notify the employee
+        try:
+            notification_msg = f"✅ تمت الموافقة على طلب الإجازة الخاص بك (ID: {req_id}) من قبل {admin_name}.\nالتفاصيل: {leave_details}"
+            print(f"[NOTIFICATION] Sending approval notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+            logger.info(f"Sending approval notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+            await context.bot.send_message(emp.telegram_id, notification_msg)
+            print(f"[NOTIFICATION] Successfully sent approval notification to employee {emp.full_name}")
+            logger.info(f"Successfully sent approval notification to employee {emp.full_name}")
+        except Exception as e:
+            print(f"[NOTIFICATION ERROR] Failed to notify employee {emp.full_name} (ID: {emp.telegram_id}): {e}")
+            logger.error(f"Failed to notify employee {emp.full_name} (ID: {emp.telegram_id}): {e}")
+
         approval_msg = f"✅ تم الموافقة على طلب الإجازة (ID: {req_id}) للموظف {emp.full_name} من قبل {admin_name}.\nالتفاصيل: {leave_details}"
         
+        # Always update the current admin's message first
+        try:
+            await query.edit_message_text(f"✅ تمت الموافقة على طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
+        except Exception as e:
+            logger.error(f"Failed to update current admin's message: {e}")
+
+        # Update other managers' notifications
         for log in logs:
             try:
-                if log.manager_telegram_id == admin_id:
-                    # Update current admin's message
-                    await query.edit_message_text(f"تمت الموافقة على طلب الإجازة {req_id}.", reply_markup=get_admin_menu_keyboard())
-                else:
-                    # Notify and update other managers
-                    await context.bot.send_message(chat_id=log.manager_telegram_id, text=approval_msg)
+                if log.manager_telegram_id != admin_id:
+                    # Update other managers (Edit only, do NOT send new message to avoid duplicates)
                     try:
                         await context.bot.edit_message_text(
                             chat_id=log.manager_telegram_id,
@@ -869,7 +926,7 @@ async def approve_leave_logic(context: ContextTypes.DEFAULT_TYPE, query, req_id:
                         # Message might be too old or already deleted/edited
                         pass
             except Exception as e:
-                logger.error(f"Failed to update/notify manager {log.manager_telegram_id}: {e}")
+                logger.error(f"Failed to update manager {log.manager_telegram_id}: {e}")
         
         # Clean up logs for this request
         session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).delete()
@@ -962,34 +1019,31 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             # Get admin name
             admin_id = query.from_user.id
             admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
-            admin_name = admin.full_name if admin else f"Admin {admin_id}"
+            admin_name = admin.full_name if admin else f"مدير {admin_id}"
 
             if req and req.status == 'pending':
                 req.status = 'rejected'
                 req.approved_by = admin_name
                 session.commit()
-                await query.edit_message_text(f"تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
-                await context.bot.send_message(req.employee.telegram_id, f"❌ تم رفض طلب إجازتك رقم {req.id}.")
+                await query.edit_message_text(f"✅ تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.", reply_markup=get_admin_menu_keyboard())
+                
+                # Notify the employee
+                try:
+                    emp = req.employee
+                    rejection_msg = f"❌ نأسف، تم رفض طلب إجازتك رقم {req.id} من قبل {admin_name}."
+                    print(f"[NOTIFICATION] Sending rejection notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+                    logger.info(f"Sending rejection notification to employee {emp.full_name} (ID: {emp.telegram_id})")
+                    await context.bot.send_message(
+                        chat_id=emp.telegram_id,
+                        text=rejection_msg
+                    )
+                    print(f"[NOTIFICATION] Successfully sent rejection notification to employee {emp.full_name}")
+                    logger.info(f"Successfully sent rejection notification to employee {emp.full_name}")
+                except Exception as e:
+                    print(f"[NOTIFICATION ERROR] Failed to notify employee of rejection: {e}")
+                    logger.error(f"Failed to notify employee of rejection: {e}")
             else:
-                await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
-
-        elif query.data.startswith('admin_reject_'):
-            req_id = int(query.data.split('_')[2])
-            req = session.get(LeaveRequest, req_id)
-            
-            # Get admin name
-            admin_id = query.from_user.id
-            admin = session.query(Employee).filter_by(telegram_id=admin_id).first()
-            admin_name = admin.full_name if admin else f"Admin {admin_id}"
-
-            if req and req.status == 'pending':
-                req.status = 'rejected'
-                req.approved_by = admin_name
-                session.commit()
-                await query.edit_message_text(f"تم رفض طلب الإجازة رقم {req.id} بواسطة {admin_name}.")
-                await context.bot.send_message(req.employee.telegram_id, f"❌ تم رفض طلب إجازتك رقم {req.id}.")
-            else:
-                await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.")
+                await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
                 
     except Exception as e:
         logger.error(f"Error in global_admin_handler: {e}")

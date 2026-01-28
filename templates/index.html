@@ -28,6 +28,7 @@
                                     <th>السبب</th>
                                     <th>البديل / الحالة</th>
                                     <th>حالة الطلب</th>
+                                    <th>تمت الموافقة بواسطة</th>
                                     <th>الإجراءات</th>
                                 </tr>
                             </thead>
@@ -78,6 +79,7 @@
                                         <span class="badge bg-danger">مرفوض</span>
                                         {% endif %}
                                     </td>
+                                    <td>{{ request.approved_by or '-' }}</td>
                                     <td>
                                         <div class="btn-group btn-group-sm">
                                             {% if request.status == 'pending' %}

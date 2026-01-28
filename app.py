@@ -86,7 +86,23 @@ async def send_notification_async(telegram_id, message):
             app.logger.error(f"Failed to send notification to {telegram_id}: {e}")
 
 def send_notification(telegram_id, message):
-    asyncio.run(send_notification_async(telegram_id, message))
+    try:
+        # Check if we are in a thread with no event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            # If loop is already running (unlikely for asyncio.run), use a different approach
+            # but for Flask-threaded it's usually not running.
+            asyncio.create_task(send_notification_async(telegram_id, message))
+        else:
+            loop.run_until_complete(send_notification_async(telegram_id, message))
+        print(f"Notification sent to {telegram_id}: {message[:50]}...")
+    except Exception as e:
+        print(f"Error in send_notification: {e}")
 
 # --- Business Logic for Leave Calculation ---
 def calculate_leave_days(start_date, end_date):
@@ -262,11 +278,33 @@ def approve_user_web(user_id):
 def reject_user_web(user_id):
     user = session.get(Employee, user_id)
     if user:
-        if user.status == 'pending':
-             send_notification(user.telegram_id, "نأسف، تم رفض طلب تسجيلك.")
-        session.delete(user)
-        session.commit()
-        flash(f"تم حذف الموظف {user.full_name}.", "success")
+        user_name = user.full_name
+        user_telegram_id = user.telegram_id
+        
+        try:
+            # Send notification before deletion if pending
+            if user.status == 'pending':
+                send_notification(user_telegram_id, "نأسف، تم رفض طلب تسجيلك.")
+            
+            # First, delete all leave requests where this employee is the requester
+            session.query(LeaveRequest).filter(LeaveRequest.employee_id == user.id).delete()
+            
+            # Then, update leave requests where this employee is a replacement (set to NULL)
+            session.query(LeaveRequest).filter(LeaveRequest.replacement_employee_id == user.id).update(
+                {LeaveRequest.replacement_employee_id: None}
+            )
+            
+            # Delete notification logs related to this user
+            from database import NotificationLog
+            session.query(NotificationLog).filter(NotificationLog.manager_telegram_id == user_telegram_id).delete()
+            
+            # Now delete the employee
+            session.delete(user)
+            session.commit()
+            flash(f"تم حذف الموظف {user_name}.", "success")
+        except Exception as e:
+            session.rollback()
+            flash(f"حدث خطأ أثناء حذف الموظف: {e}", "error")
     return redirect(url_for('manage_employees'))
 
 @app.route('/add_user', methods=['POST'])
