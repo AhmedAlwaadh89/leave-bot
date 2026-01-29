@@ -58,6 +58,28 @@ def check_conflicts(employee_id: int, start_date: date, end_date: date) -> bool:
     
     return conflicts > 0
 
+def get_requested_duration(user_data):
+    """Calculates the requested duration (days or hours) based on user_data."""
+    leave_type = user_data.get('leave_type')
+    if leave_type == 'يومية':
+        start_date = user_data.get('start_date')
+        end_date = user_data.get('end_date')
+        days = 0
+        curr = start_date
+        while curr <= end_date:
+            if curr.weekday() not in [4, 5]: # Fri=4, Sat=5
+                days += 1
+            curr += timedelta(days=1)
+        return days, 'أيام'
+    elif leave_type == 'بالساعة':
+        start_time = user_data.get('start_time')
+        end_time = user_data.get('end_time')
+        if start_time and end_time:
+            duration = datetime.combine(date.today(), end_time) - datetime.combine(date.today(), start_time)
+            hours = duration.total_seconds() / 3600
+            return hours, 'ساعات'
+    return 0, None
+
 def get_main_menu_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
     """Builds the main menu keyboard based on user role."""
     keyboard = [
@@ -330,6 +352,17 @@ async def leave_end_time_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def leave_reason_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles the leave reason input and asks for a replacement."""
     context.user_data['reason'] = update.message.text
+    
+    # Check balance before proceeding
+    employee = session.query(Employee).filter_by(telegram_id=update.effective_user.id).first()
+    if employee:
+        requested_amount, unit = get_requested_duration(context.user_data)
+        current_balance = employee.daily_leave_balance if context.user_data['leave_type'] == 'يومية' else employee.hourly_leave_balance
+        
+        if current_balance < requested_amount:
+            await update.message.reply_text("عذراً، ليس لديك رصيد كافي لتقديم هذا الطلب.")
+            context.user_data.clear()
+            return ConversationHandler.END
     
     # Fetch other employees to be potential replacements
     current_user_id = update.effective_user.id
