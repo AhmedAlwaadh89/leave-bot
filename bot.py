@@ -788,6 +788,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception as e:
                 print(f"[NOTIFICATION ERROR] Failed to notify employee of rejection: {e}")
                 logger.error(f"Failed to notify employee of rejection: {e}")
+            
+            # Notify other managers about rejection
+            logs = session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).all()
+            emp = req.employee
+            
+            if req.leave_type == 'بالساعة' and req.start_time:
+                leave_details = f"يوم {req.start_date} من {req.start_time.strftime('%H:%M')} إلى {req.end_time.strftime('%H:%M')}"
+            else:
+                leave_details = f"من {req.start_date} إلى {req.end_date}"
+            
+            rejection_notification = f"❌ تم رفض طلب الإجازة (ID: {req_id}) للموظف {emp.full_name} من قبل {admin_name}.\nالتفاصيل: {leave_details}"
+            
+            for log in logs:
+                try:
+                    if log.manager_telegram_id != user_id:
+                        try:
+                            await context.bot.edit_message_text(
+                                chat_id=log.manager_telegram_id,
+                                message_id=log.message_id,
+                                text=rejection_notification
+                            )
+                        except Exception:
+                            # Message might be too old or already deleted/edited
+                            pass
+                except Exception as e:
+                    logger.error(f"Failed to update manager {log.manager_telegram_id}: {e}")
+            
+            # Clean up logs for this request
+            session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).delete()
+            session.commit()
         else:
             await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
         
@@ -1075,6 +1105,36 @@ async def global_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 except Exception as e:
                     print(f"[NOTIFICATION ERROR] Failed to notify employee of rejection: {e}")
                     logger.error(f"Failed to notify employee of rejection: {e}")
+                
+                # Notify other managers about rejection
+                logs = session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).all()
+                emp = req.employee
+                
+                if req.leave_type == 'بالساعة' and req.start_time:
+                    leave_details = f"يوم {req.start_date} من {req.start_time.strftime('%H:%M')} إلى {req.end_time.strftime('%H:%M')}"
+                else:
+                    leave_details = f"من {req.start_date} إلى {req.end_date}"
+                
+                rejection_notification = f"❌ تم رفض طلب الإجازة (ID: {req_id}) للموظف {emp.full_name} من قبل {admin_name}.\nالتفاصيل: {leave_details}"
+                
+                for log in logs:
+                    try:
+                        if log.manager_telegram_id != admin_id:
+                            try:
+                                await context.bot.edit_message_text(
+                                    chat_id=log.manager_telegram_id,
+                                    message_id=log.message_id,
+                                    text=rejection_notification
+                                )
+                            except Exception:
+                                # Message might be too old or already deleted/edited
+                                pass
+                    except Exception as e:
+                        logger.error(f"Failed to update manager {log.manager_telegram_id}: {e}")
+                
+                # Clean up logs for this request
+                session.query(NotificationLog).filter_by(request_type='leave', target_id=req_id).delete()
+                session.commit()
             else:
                 await query.edit_message_text("الطلب غير موجود أو تمت معالجته مسبقاً.", reply_markup=get_admin_menu_keyboard())
                 
