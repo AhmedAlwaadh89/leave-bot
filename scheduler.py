@@ -1,12 +1,22 @@
 """
-Monthly Leave Balance Renewal Scheduler
-This module handles automatic renewal of employee leave balances monthly.
+Background jobs:
+
+1. Monthly leave balance renewal (no accumulation). The check runs at
+   start-up and once a day, and the renewal itself is idempotent per month,
+   so a server that sleeps through the 1st of the month catches up on the
+   next start.
+2. Daily reminder to managers about requests waiting more than 24 hours.
 """
-import schedule
-import time
 import logging
-from datetime import datetime
-from database import session, Employee
+import os
+import time
+from datetime import datetime, timedelta
+
+import schedule
+
+from database import session
+from leave_logic import renew_monthly_balances, pending_requests_for_review, leave_details, balance_hint
+import notifier
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -14,81 +24,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+RENEWAL_CHECK_TIME = os.getenv("RENEWAL_CHECK_TIME", "00:05")
+REMINDER_TIME = os.getenv("PENDING_REMINDER_TIME", "06:00")  # server time (UTC on most hosts)
+REMINDER_AGE_HOURS = int(os.getenv("PENDING_REMINDER_AGE_HOURS", "24"))
+
 
 def renew_monthly_leave_balance():
-    """
-    Renews the leave balance for all approved employees based on their monthly quota.
-    This runs at the start of each month.
-    """
-    # Check if today is the 1st day of the month
-    if datetime.now().day != 1:
-        return
-
+    """Scheduler entry point for the monthly renewal."""
     try:
-        logger.info("Starting monthly leave balance renewal...")
-        
-        # Get all approved employees
-        employees = session.query(Employee).filter_by(status='approved').all()
-        
-        renewed_count = 0
-        for employee in employees:
-            # Add monthly quota to current balance
-            employee.daily_leave_balance += employee.monthly_daily_leave_quota
-            employee.hourly_leave_balance += employee.monthly_hourly_leave_quota
-            
-            logger.info(
-                f"Renewed balance for {employee.full_name}: "
-                f"Days={employee.daily_leave_balance}, Hours={employee.hourly_leave_balance}"
-            )
-            renewed_count += 1
-        
-        session.commit()
-        logger.info(f"Successfully renewed leave balance for {renewed_count} employees.")
-        
+        renewed = renew_monthly_balances()
+        if renewed:
+            for emp in renewed:
+                logger.info(
+                    "Renewed %s: days=%s hours=%s (unused note: %s / %s)",
+                    emp.full_name, emp.daily_leave_balance, emp.hourly_leave_balance,
+                    emp.unused_daily_carryover, emp.unused_hourly_carryover,
+                )
+            logger.info("Monthly renewal applied to %d employee(s).", len(renewed))
     except Exception as e:
-        logger.error(f"Error renewing monthly leave balance: {e}")
-        session.rollback()
+        logger.error("Error renewing monthly leave balance: %s", e)
+    finally:
+        session.remove()
 
 
-def schedule_monthly_renewal():
-    """
-    Schedules the check to run every day at 00:01.
-    The renewal function itself checks if it's the 1st of the month.
-    """
-    # Run every day at 00:01, but the function will only execute logic on the 1st
-    schedule.every().day.at("00:01").do(renew_monthly_leave_balance)
-    logger.info("Monthly leave balance renewal scheduler started (checks daily at 00:01)")
+def remind_pending_requests():
+    """Send managers one summary of requests that have waited too long."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=REMINDER_AGE_HOURS)
+        stale = [r for r in pending_requests_for_review() if r.created_at is None or r.created_at <= cutoff]
+        if not stale:
+            return
+        lines = [f"⏰ تذكير: {len(stale)} طلب إجازة بانتظار قرارك منذ أكثر من {REMINDER_AGE_HOURS} ساعة:"]
+        for r in stale:
+            lines.append(f"\n• #{r.id} {r.employee.full_name} ({r.leave_type}) {leave_details(r)}")
+            lines.append(balance_hint(r.employee))
+        lines.append("\nاستخدم قائمة المدير ← مراجعة الطلبات، أو لوحة الويب.")
+        notifier.notify_managers("\n".join(lines))
+    except Exception as e:
+        logger.error("Error sending pending reminder: %s", e)
+    finally:
+        session.remove()
+
+
+def schedule_jobs():
+    schedule.every().day.at(RENEWAL_CHECK_TIME).do(renew_monthly_leave_balance)
+    schedule.every().day.at(REMINDER_TIME).do(remind_pending_requests)
+    logger.info("Scheduler: renewal check daily at %s, pending reminder daily at %s", RENEWAL_CHECK_TIME, REMINDER_TIME)
 
 
 def run_scheduler():
-    """
-    Runs the scheduler in a loop. This should be called in a separate thread.
-    """
-    schedule_monthly_renewal()
-    
-    logger.info("Scheduler started. Running pending tasks...")
-    
+    """Run forever. Call from a dedicated thread."""
+    # Catch up immediately in case the server was asleep on the 1st of the month
+    renew_monthly_leave_balance()
+    schedule_jobs()
     while True:
         schedule.run_pending()
-        time.sleep(60)  # Check every minute
+        time.sleep(60)
 
 
 if __name__ == "__main__":
-    # For testing: run renewal immediately
-    # Note: This will run the logic regardless of the date if executed directly
-    logger.info("Running manual leave balance renewal for testing...")
-    
-    # Temporarily bypass the date check for manual run
-    try:
-        logger.info("Starting MANUAL monthly leave balance renewal...")
-        employees = session.query(Employee).filter_by(status='approved').all()
-        renewed_count = 0
-        for employee in employees:
-            employee.daily_leave_balance += employee.monthly_daily_leave_quota
-            employee.hourly_leave_balance += employee.monthly_hourly_leave_quota
-            renewed_count += 1
-        session.commit()
-        logger.info(f"Successfully renewed leave balance for {renewed_count} employees.")
-    except Exception as e:
-        logger.error(f"Error renewing monthly leave balance: {e}")
-        session.rollback()
+    logger.info("Running monthly renewal check now...")
+    renew_monthly_leave_balance()

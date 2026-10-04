@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 
 {% block content %}
+<form id="bulkDeleteForm" method="POST" action="{{ url_for('bulk_delete_requests') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+</form>
+
 <div class="row mb-4">
     <div class="col-md-12">
         <div class="card">
@@ -12,94 +16,123 @@
                 </button>
             </div>
             <div class="card-body">
+                <p class="text-muted small mb-3">
+                    سياسة الرصيد: حصة شهرية (افتراضياً 2 يوم و 4 ساعات) تتجدد أول كل شهر بدون تراكم.
+                    ما لم يُستخدم يُسجَّل كملاحظة للإدارة فقط. أيام العمل من السبت إلى الخميس.
+                </p>
                 <div class="table-responsive">
-                    <form id="bulkDeleteForm" method="POST" action="{{ url_for('bulk_delete_requests') }}">
-                        <table class="table table-hover align-middle">
-                            <thead>
-                                <tr>
-                                    <th>
-                                        <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)">
-                                    </th>
-                                    <th>ID</th>
-                                    <th>الموظف</th>
-                                    <th>القسم</th>
-                                    <th>النوع</th>
-                                    <th>التفاصيل</th>
-                                    <th>السبب</th>
-                                    <th>البديل / الحالة</th>
-                                    <th>حالة الطلب</th>
-                                    <th>تمت الموافقة بواسطة</th>
-                                    <th>الإجراءات</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for request in requests %}
-                                <tr>
-                                    <td>
-                                        <input type="checkbox" name="request_ids" value="{{ request.id }}"
-                                            class="request-checkbox" onclick="updateSelectedCount()">
-                                    </td>
-                                    <td>#{{ request.id }}</td>
-                                    <td>{{ request.employee.full_name }}</td>
-                                    <td><span class="badge bg-secondary">{{ request.employee.department or 'غير محدد'
-                                            }}</span></td>
-                                    <td>{{ request.leave_type }}</td>
-                                    <td>
-                                        {% if request.leave_type == 'يومية' %}
-                                        <small class="text-muted">من:</small> {{ request.start_date }}<br>
-                                        <small class="text-muted">إلى:</small> {{ request.end_date }}
-                                        {% else %}
-                                        {{ request.start_date }}<br>
-                                        <small class="text-muted">{{ request.start_time.strftime('%H:%M') }} - {{
-                                            request.end_time.strftime('%H:%M') }}</small>
-                                        {% endif %}
-                                    </td>
-                                    <td>{{ request.reason }}</td>
-                                    <td>
-                                        {% if request.replacement_employee %}
-                                        {{ request.replacement_employee.full_name }}
-                                        <br>
-                                        {% if request.replacement_approval_status == 'accepted' %}
-                                        <span class="badge bg-success">وافق</span>
-                                        {% elif request.replacement_approval_status == 'rejected' %}
-                                        <span class="badge bg-danger">رفض</span>
-                                        {% else %}
-                                        <span class="badge bg-warning text-dark">انتظار</span>
-                                        {% endif %}
-                                        {% else %}
-                                        <span class="text-muted">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>
+                                    <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)">
+                                </th>
+                                <th>ID</th>
+                                <th>الموظف</th>
+                                <th>القسم</th>
+                                <th>النوع</th>
+                                <th>التفاصيل</th>
+                                <th>السبب</th>
+                                <th>البديل / الحالة</th>
+                                <th>رصيد الموظف</th>
+                                <th>حالة الطلب</th>
+                                <th>تمت المعالجة بواسطة</th>
+                                <th>الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for request in requests %}
+                            {% set emp = request.employee %}
+                            <tr>
+                                <td>
+                                    <input type="checkbox" name="request_ids" value="{{ request.id }}"
+                                        form="bulkDeleteForm" class="request-checkbox" onclick="updateSelectedCount()">
+                                </td>
+                                <td>#{{ request.id }}</td>
+                                <td>{{ emp.full_name }}</td>
+                                <td><span class="badge bg-secondary">{{ emp.department or 'غير محدد' }}</span></td>
+                                <td>{{ request.leave_type }}</td>
+                                <td>
+                                    {% if request.leave_type == 'يومية' %}
+                                    <small class="text-muted">من:</small> {{ request.start_date }}<br>
+                                    <small class="text-muted">إلى:</small> {{ request.end_date }}
+                                    {% else %}
+                                    {{ request.start_date }}<br>
+                                    <small class="text-muted">{{ request.start_time.strftime('%H:%M') if request.start_time }} -
+                                        {{ request.end_time.strftime('%H:%M') if request.end_time }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>{{ request.reason or '-' }}</td>
+                                <td>
+                                    {% if request.replacement_employee %}
+                                    {{ request.replacement_employee.full_name }}
+                                    <br>
+                                    {% if request.replacement_approval_status == 'accepted' %}
+                                    <span class="badge bg-success">وافق</span>
+                                    {% elif request.replacement_approval_status == 'rejected' %}
+                                    <span class="badge bg-danger">رفض</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">انتظار</span>
+                                    {% endif %}
+                                    {% else %}
+                                    <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small>{{ fmt(emp.daily_leave_balance) }} يوم | {{ fmt(emp.hourly_leave_balance) }} ساعة</small>
+                                    {% if (emp.unused_daily_carryover or 0) > 0 or (emp.unused_hourly_carryover or 0) > 0 %}
+                                    <br><small class="text-warning" title="غير مستخدم من أشهر سابقة (ملاحظة للتقدير فقط)">
+                                        📝 غير مستخدم سابقاً: {{ fmt(emp.unused_daily_carryover) }} يوم / {{ fmt(emp.unused_hourly_carryover) }} ساعة
+                                    </small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if request.status == 'pending' %}
+                                    <span class="badge bg-warning text-dark">قيد المراجعة</span>
+                                    {% elif request.status == 'approved' %}
+                                    <span class="badge bg-success">مقبول</span>
+                                    {% elif request.status == 'cancelled' %}
+                                    <span class="badge bg-secondary">ملغي</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">مرفوض</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ request.approved_by or '-' }}</td>
+                                <td>
+                                    <div class="d-flex gap-1 flex-wrap">
                                         {% if request.status == 'pending' %}
-                                        <span class="badge bg-warning text-dark">قيد المراجعة</span>
-                                        {% elif request.status == 'approved' %}
-                                        <span class="badge bg-success">مقبول</span>
-                                        {% else %}
-                                        <span class="badge bg-danger">مرفوض</span>
+                                        <form method="POST" action="{{ url_for('approve_request', request_id=request.id) }}">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-success btn-sm" title="موافقة">✅</button>
+                                        </form>
+                                        <form method="POST" action="{{ url_for('approve_request', request_id=request.id) }}"
+                                            onsubmit="return confirm('موافقة استثنائية: سيتم تجاوز الرصيد الحالي للموظف. هل أنت متأكد؟')">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="force" value="1">
+                                            <button type="submit" class="btn btn-warning btn-sm" title="موافقة استثنائية (تجاوز الرصيد)">⚠️</button>
+                                        </form>
+                                        <form method="POST" action="{{ url_for('reject_request', request_id=request.id) }}">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-danger btn-sm" title="رفض">❌</button>
+                                        </form>
+                                        <a href="{{ url_for('edit_request', request_id=request.id) }}"
+                                            class="btn btn-primary btn-sm" title="تعديل">✏️</a>
                                         {% endif %}
-                                    </td>
-                                    <td>{{ request.approved_by or '-' }}</td>
-                                    <td>
-                                        <div class="btn-group btn-group-sm">
-                                            {% if request.status == 'pending' %}
-                                            <a href="{{ url_for('approve_request', request_id=request.id) }}"
-                                                class="btn btn-success" title="موافقة">✅</a>
-                                            <a href="{{ url_for('reject_request', request_id=request.id) }}"
-                                                class="btn btn-danger" title="رفض">❌</a>
-                                            {% endif %}
-                                            <a href="{{ url_for('edit_request', request_id=request.id) }}"
-                                                class="btn btn-primary" title="تعديل">✏️</a>
-                                            <a href="{{ url_for('delete_request', request_id=request.id) }}"
-                                                class="btn btn-outline-danger" title="حذف"
-                                                onclick="return confirm('هل أنت متأكد من حذف هذا الطلب؟')">🗑️</a>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </form>
+                                        <form method="POST" action="{{ url_for('delete_request', request_id=request.id) }}"
+                                            onsubmit="return confirm('هل أنت متأكد من حذف هذا الطلب؟{% if request.status == 'approved' %} سيتم استعادة الرصيد المخصوم.{% endif %}')">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm" title="حذف">🗑️</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="12" class="text-center text-muted">لا توجد طلبات.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -108,31 +141,25 @@
 
 <script>
     function toggleSelectAll(checkbox) {
-        const checkboxes = document.querySelectorAll('.request-checkbox');
-        checkboxes.forEach(cb => cb.checked = checkbox.checked);
+        document.querySelectorAll('.request-checkbox').forEach(cb => cb.checked = checkbox.checked);
         updateSelectedCount();
     }
 
     function updateSelectedCount() {
-        const checkboxes = document.querySelectorAll('.request-checkbox:checked');
-        const count = checkboxes.length;
+        const count = document.querySelectorAll('.request-checkbox:checked').length;
         document.getElementById('selectedCount').textContent = count;
         document.getElementById('deleteSelectedBtn').style.display = count > 0 ? 'block' : 'none';
-
-        // Update "select all" checkbox
-        const allCheckboxes = document.querySelectorAll('.request-checkbox');
-        const selectAllCheckbox = document.getElementById('selectAll');
-        selectAllCheckbox.checked = count === allCheckboxes.length && count > 0;
+        const all = document.querySelectorAll('.request-checkbox').length;
+        document.getElementById('selectAll').checked = count === all && count > 0;
     }
 
     function deleteSelected() {
-        const checkboxes = document.querySelectorAll('.request-checkbox:checked');
-        if (checkboxes.length === 0) {
+        const count = document.querySelectorAll('.request-checkbox:checked').length;
+        if (count === 0) {
             alert('الرجاء تحديد طلب واحد على الأقل للحذف');
             return;
         }
-
-        if (confirm(`هل أنت متأكد من حذف ${checkboxes.length} طلب(ات)؟`)) {
+        if (confirm(`هل أنت متأكد من حذف ${count} طلب(ات)؟ سيتم استعادة الرصيد للطلبات المعتمدة.`)) {
             document.getElementById('bulkDeleteForm').submit();
         }
     }

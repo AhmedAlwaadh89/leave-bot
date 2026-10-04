@@ -9,13 +9,14 @@
             </div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label">الموظف</label>
                         <select name="employee_id" class="form-select" required>
                             <option value="">اختر الموظف...</option>
                             {% for emp in employees %}
-                            <option value="{{ emp.id }}">{{ emp.full_name }} (رصيد: {{ emp.daily_leave_balance }} يوم |
-                                {{ emp.hourly_leave_balance }} ساعة)</option>
+                            <option value="{{ emp.id }}">{{ emp.full_name }} (رصيد: {{ fmt(emp.daily_leave_balance) }} يوم |
+                                {{ fmt(emp.hourly_leave_balance) }} ساعة{% if (emp.unused_daily_carryover or 0) > 0 or (emp.unused_hourly_carryover or 0) > 0 %} | غير مستخدم سابقاً: {{ fmt(emp.unused_daily_carryover) }} يوم / {{ fmt(emp.unused_hourly_carryover) }} ساعة{% endif %})</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -59,7 +60,7 @@
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" name="ignore_balance" id="ignore_balance">
                         <label class="form-check-label text-danger" for="ignore_balance">
-                            تجاهل تحذير الرصيد (خصم حتى لو أصبح بالسالب)
+                            موافقة استثنائية: تجاوز الرصيد الحالي (يصبح الرصيد صفراً ويُخصم الفرق من ملاحظة "غير المستخدم سابقاً" إن وُجدت)
                         </label>
                     </div>
 

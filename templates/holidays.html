@@ -9,6 +9,7 @@
             </div>
             <div class="card-body">
                 <form action="{{ url_for('add_holiday') }}" method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="name" class="form-label">اسم العطلة</label>
                         <input type="text" class="form-control" id="name" name="name" required>
@@ -27,6 +28,7 @@
         <div class="card">
             <div class="card-header bg-white">
                 <h4 class="mb-0">📅 قائمة العطلات الرسمية</h4>
+                <small class="text-muted">أيام العمل: السبت إلى الخميس. الجمعة عطلة أسبوعية ولا تُحسب من الرصيد، وكذلك العطلات المسجلة هنا.</small>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -44,8 +46,11 @@
                                 <td>{{ holiday.name }}</td>
                                 <td>{{ holiday.date }}</td>
                                 <td>
-                                    <a href="{{ url_for('delete_holiday', holiday_id=holiday.id) }}"
-                                        class="btn btn-danger btn-sm" onclick="return confirm('هل أنت متأكد؟')">حذف</a>
+                                    <form action="{{ url_for('delete_holiday', holiday_id=holiday.id) }}" method="POST"
+                                        class="d-inline" onsubmit="return confirm('هل أنت متأكد؟')">
+                                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-danger btn-sm">حذف</button>
+                                    </form>
                                 </td>
                             </tr>
                             {% endfor %}

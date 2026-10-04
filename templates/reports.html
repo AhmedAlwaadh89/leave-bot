@@ -8,37 +8,36 @@
                 <h4 class="mb-0">🔍 تصفية التقارير</h4>
             </div>
             <div class="card-body">
-                <form method="POST" class="row g-3">
+                <form method="GET" class="row g-3" id="filterForm">
                     <div class="col-md-3">
                         <label class="form-label">الموظف</label>
                         <select name="employee_id" class="form-select">
                             <option value="">الكل</option>
                             {% for emp in employees %}
-                            <option value="{{ emp.id }}">{{ emp.full_name }}</option>
+                            <option value="{{ emp.id }}" {% if filters.get('employee_id') == emp.id|string %}selected{% endif %}>{{ emp.full_name }}</option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">من تاريخ</label>
-                        <input type="date" name="start_date" class="form-control">
+                        <input type="date" name="start_date" class="form-control" value="{{ filters.get('start_date', '') }}">
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">إلى تاريخ</label>
-                        <input type="date" name="end_date" class="form-control">
+                        <input type="date" name="end_date" class="form-control" value="{{ filters.get('end_date', '') }}">
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">الحالة</label>
                         <select name="status" class="form-select">
                             <option value="">الكل</option>
-                            <option value="approved">مقبول</option>
-                            <option value="pending">قيد الانتظار</option>
-                            <option value="rejected">مرفوض</option>
+                            {% for key, label in STATUS_LABELS.items() %}
+                            <option value="{{ key }}" {% if filters.get('status') == key %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="col-12 d-flex gap-2">
                         <button type="submit" class="btn btn-primary">بحث</button>
-                        <a href="{{ url_for('export_reports', **request.form) }}" class="btn btn-success"
-                            id="exportBtn">تصدير Excel</a>
+                        <a href="{{ url_for('export_reports') }}" class="btn btn-success" id="exportBtn">تصدير CSV (Excel)</a>
                         <button type="button" class="btn btn-secondary" onclick="window.print()">طباعة</button>
                     </div>
                 </form>
@@ -80,7 +79,7 @@
 
     document.getElementById('exportBtn').addEventListener('click', function (e) {
         e.preventDefault();
-        const formData = new FormData(document.querySelector('form'));
+        const formData = new FormData(document.getElementById('filterForm'));
         const params = new URLSearchParams(formData);
         window.location.href = "{{ url_for('export_reports') }}?" + params.toString();
     });
@@ -113,18 +112,21 @@
                                     {% if req.leave_type == 'يومية' %}
                                     {{ req.start_date }} ➡️ {{ req.end_date }}
                                     {% else %}
-                                    {{ req.start_date }} ({{ req.start_time }} - {{ req.end_time }})
+                                    {{ req.start_date }} ({{ req.start_time.strftime('%H:%M') if req.start_time }} - {{ req.end_time.strftime('%H:%M') if req.end_time }})
                                     {% endif %}
                                 </td>
-                                <td>{{ req.reason }}</td>
+                                <td>{{ req.reason or '-' }}</td>
                                 <td>
                                     {% if req.status == 'approved' %}
                                     <span class="badge bg-success">مقبول</span>
                                     {% elif req.status == 'pending' %}
                                     <span class="badge bg-warning text-dark">انتظار</span>
+                                    {% elif req.status == 'cancelled' %}
+                                    <span class="badge bg-secondary">ملغي</span>
                                     {% else %}
                                     <span class="badge bg-danger">مرفوض</span>
                                     {% endif %}
+                                    {% if req.approved_by %}<br><small class="text-muted">{{ req.approved_by }}</small>{% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
