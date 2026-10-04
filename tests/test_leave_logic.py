@@ -64,35 +64,46 @@ class TestApproval(unittest.TestCase):
         req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 4))  # Sunday
         res = logic.approve_request(req.id, "Boss")
         self.assertTrue(res.ok)
-        self.assertFalse(res.exceptional)
+        self.assertFalse(res.converted_to_unpaid)
         self.assertEqual(emp.daily_leave_balance, 1.0)
         self.assertEqual(req.status, 'approved')
         self.assertEqual(req.approved_by, "Boss")
 
-    def test_insufficient_balance_requires_force(self):
+    def test_insufficient_balance_blocks_unless_converted_to_unpaid(self):
         emp = make_employee(self.session, days=1.0, unused_d=3.0)
         req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 6))  # 3 working days
         res = logic.approve_request(req.id, "Boss")
         self.assertFalse(res.ok)
-        self.assertTrue(res.needs_force)
+        self.assertTrue(res.needs_unpaid)
         self.assertEqual(res.shortage, 2.0)
         self.assertEqual(req.status, 'pending')
         self.assertEqual(emp.daily_leave_balance, 1.0)
 
-        res = logic.approve_request(req.id, "Boss", force=True)
+        res = logic.approve_request(req.id, "Boss", convert_to_unpaid=True)
         self.assertTrue(res.ok)
-        self.assertTrue(res.exceptional)
-        self.assertEqual(emp.daily_leave_balance, 0.0)
-        self.assertEqual(emp.unused_daily_carryover, 1.0)  # 3 - 2 shortage
-        self.assertIn("استثنائي", req.approved_by)
+        self.assertTrue(res.converted_to_unpaid)
+        self.assertEqual(req.leave_type, logic.UNPAID)
+        self.assertEqual(req.status, 'approved')
+        self.assertEqual(emp.daily_leave_balance, 1.0)  # untouched
+        self.assertEqual(emp.unused_daily_carryover, 3.0)  # note untouched
+        self.assertIn("بدون راتب", req.approved_by)
 
-    def test_force_without_carryover_never_goes_negative(self):
-        emp = make_employee(self.session, hours=1.0, unused_h=0.0)
-        req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 4), logic.HOURLY, time(9, 0), time(12, 0))
-        res = logic.approve_request(req.id, "Boss", force=True)
+    def test_unpaid_request_never_touches_balance(self):
+        emp = make_employee(self.session, days=0.0, hours=0.0)
+        req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 8), logic.UNPAID)
+        amount, shortage, unit = logic.shortage_for(emp, req.leave_type, req.start_date, req.end_date)
+        self.assertEqual((amount, shortage, unit), (5.0, 0.0, 'يوم'))
+        res = logic.approve_request(req.id, "Boss")
         self.assertTrue(res.ok)
-        self.assertEqual(emp.hourly_leave_balance, 0.0)
-        self.assertEqual(emp.unused_hourly_carryover, 0.0)
+        self.assertEqual(emp.daily_leave_balance, 0.0)
+        tid, restored = logic.delete_request(req.id)
+        self.assertFalse(restored)
+        self.assertEqual(emp.daily_leave_balance, 0.0)
+
+    def test_shortage_for_hourly(self):
+        emp = make_employee(self.session, hours=1.0)
+        amount, shortage, unit = logic.shortage_for(emp, logic.HOURLY, date(2026, 10, 4), date(2026, 10, 4), time(9, 0), time(12, 0))
+        self.assertEqual((amount, shortage, unit), (3.0, 2.0, 'ساعة'))
 
     def test_second_approval_is_rejected(self):
         emp = make_employee(self.session)

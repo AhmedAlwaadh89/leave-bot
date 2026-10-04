@@ -10,9 +10,9 @@ all entry points apply exactly the same rules:
 * The quota is renewed at the start of each month **without accumulation**.
   Unused balance is recorded in ``unused_*_carryover`` as a *note* for
   management; it is never usable balance.
-* A manager may grant an *exceptional* approval when the balance is
-  insufficient. The usable balance then drops to zero and the shortage is
-  subtracted from the informational carryover note (if any).
+* A request that exceeds the usable balance cannot be submitted. The
+  employee is offered to convert it into **unpaid leave** instead, which is
+  tracked like any other request but never touches the balance.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -25,6 +25,8 @@ WEEKEND_DAYS = {4}
 
 DAILY = 'يومية'
 HOURLY = 'بالساعة'
+UNPAID = 'بدون راتب'
+LEAVE_TYPES = (DAILY, HOURLY, UNPAID)
 
 STATUS_PENDING = 'pending'
 STATUS_APPROVED = 'approved'
@@ -38,7 +40,7 @@ STATUS_LABELS = {
     STATUS_CANCELLED: 'ملغاة',
 }
 
-EXCEPTIONAL_SUFFIX = ' (استثنائي)'
+UNPAID_SUFFIX = ' (بدون راتب)'
 
 
 # --------------------------------------------------------------------------
@@ -53,7 +55,7 @@ def fmt(n) -> str:
 
 
 def leave_details(req: LeaveRequest) -> str:
-    if req.leave_type == HOURLY and req.start_time and req.end_time:
+    if req.start_time and req.end_time:
         return f"يوم {req.start_date} من {req.start_time.strftime('%H:%M')} إلى {req.end_time.strftime('%H:%M')}"
     return f"من {req.start_date} إلى {req.end_date}"
 
@@ -109,9 +111,9 @@ def calculate_leave_hours(start_time, end_time) -> float:
 
 def requested_amount(leave_type, start_date, end_date, start_time=None, end_time=None) -> Tuple[float, str]:
     """Return (amount, unit_label) for the given leave parameters."""
-    if leave_type == DAILY:
-        return float(calculate_leave_days(start_date, end_date)), 'يوم'
-    return calculate_leave_hours(start_time, end_time), 'ساعة'
+    if leave_type == HOURLY or (leave_type == UNPAID and start_time and end_time):
+        return calculate_leave_hours(start_time, end_time), 'ساعة'
+    return float(calculate_leave_days(start_date, end_date)), 'يوم'
 
 
 def request_amount(req: LeaveRequest) -> Tuple[float, str]:
@@ -119,12 +121,18 @@ def request_amount(req: LeaveRequest) -> Tuple[float, str]:
 
 
 def current_balance(emp: Employee, leave_type: str) -> float:
-    return float(emp.daily_leave_balance or 0) if leave_type == DAILY else float(emp.hourly_leave_balance or 0)
+    if leave_type == DAILY:
+        return float(emp.daily_leave_balance or 0)
+    if leave_type == HOURLY:
+        return float(emp.hourly_leave_balance or 0)
+    return float('inf')  # unpaid leave is never limited by balance
 
 
 def shortage_for(emp: Employee, leave_type, start_date, end_date, start_time=None, end_time=None) -> Tuple[float, float, str]:
     """Return (amount, shortage, unit). shortage is 0 when the balance suffices."""
     amount, unit = requested_amount(leave_type, start_date, end_date, start_time, end_time)
+    if leave_type == UNPAID:
+        return amount, 0.0, unit
     balance = current_balance(emp, leave_type)
     return amount, max(0.0, amount - balance), unit
 
@@ -132,35 +140,27 @@ def shortage_for(emp: Employee, leave_type, start_date, end_date, start_time=Non
 # --------------------------------------------------------------------------
 # Balance mutation
 # --------------------------------------------------------------------------
-def deduct_balance(emp: Employee, leave_type: str, amount: float, force: bool = False) -> float:
+def deduct_balance(emp: Employee, leave_type: str, amount: float) -> None:
     """
     Deduct ``amount`` from the employee's usable balance.
-
-    Returns the shortage that could not be covered by the usable balance.
-    With ``force=False`` a shortage raises ValueError and nothing changes.
-    With ``force=True`` the usable balance drops to 0 and the shortage is
-    subtracted from the informational carryover note (never below 0).
+    Raises ValueError when the balance is insufficient (nothing changes).
+    Unpaid leave never touches the balance.
     """
-    is_daily = leave_type == DAILY
+    if leave_type == UNPAID:
+        return
     balance = current_balance(emp, leave_type)
-    shortage = max(0.0, amount - balance)
-    if shortage > 0 and not force:
+    if amount > balance:
         raise ValueError("insufficient balance")
-
-    new_balance = max(0.0, balance - amount)
-    if is_daily:
-        emp.daily_leave_balance = new_balance
-        if shortage > 0:
-            emp.unused_daily_carryover = max(0.0, float(emp.unused_daily_carryover or 0) - shortage)
+    if leave_type == DAILY:
+        emp.daily_leave_balance = balance - amount
     else:
-        emp.hourly_leave_balance = new_balance
-        if shortage > 0:
-            emp.unused_hourly_carryover = max(0.0, float(emp.unused_hourly_carryover or 0) - shortage)
-    return shortage
+        emp.hourly_leave_balance = balance - amount
 
 
 def restore_balance(emp: Employee, leave_type: str, amount: float) -> None:
     """Give back a previously deducted amount, capped at the monthly quota."""
+    if leave_type == UNPAID:
+        return
     if leave_type == DAILY:
         quota = float(emp.monthly_daily_leave_quota or 0)
         emp.daily_leave_balance = min(quota, float(emp.daily_leave_balance or 0) + amount)
@@ -184,11 +184,11 @@ class ActionResult:
     ok: bool
     request: Optional[LeaveRequest] = None
     error: str = ''
-    needs_force: bool = False
+    needs_unpaid: bool = False  # balance insufficient; can be approved as unpaid leave
     amount: float = 0.0
     shortage: float = 0.0
     unit: str = ''
-    exceptional: bool = False
+    converted_to_unpaid: bool = False
 
 
 def _claim(req_id: int, new_status: str, approved_by: Optional[str]) -> bool:
@@ -204,38 +204,48 @@ def _claim(req_id: int, new_status: str, approved_by: Optional[str]) -> bool:
     return updated == 1
 
 
-def approve_request(req_id: int, approver_name: str, force: bool = False) -> ActionResult:
+def approve_request(req_id: int, approver_name: str, convert_to_unpaid: bool = False) -> ActionResult:
+    """
+    Approve a pending request and deduct the balance.
+
+    If the balance became insufficient after submission (another approval or
+    a month rollover), the request is not approved unless
+    ``convert_to_unpaid`` is set, in which case it is turned into unpaid
+    leave and approved without deduction.
+    """
     req = session.get(LeaveRequest, req_id)
     if not req or req.status != STATUS_PENDING:
         return ActionResult(ok=False, request=req, error="الطلب غير موجود أو تمت معالجته مسبقاً.")
 
     emp = req.employee
-    amount, unit = request_amount(req)
-    shortage = max(0.0, amount - current_balance(emp, req.leave_type))
+    amount, shortage, unit = shortage_for(emp, req.leave_type, req.start_date, req.end_date, req.start_time, req.end_time)
 
-    if shortage > 0 and not force:
+    if shortage > 0 and not convert_to_unpaid:
         return ActionResult(
-            ok=False, request=req, needs_force=True, amount=amount, shortage=shortage, unit=unit,
+            ok=False, request=req, needs_unpaid=True, amount=amount, shortage=shortage, unit=unit,
             error=(
                 f"رصيد الموظف غير كافٍ (المطلوب {fmt(amount)} {unit}، النقص {fmt(shortage)} {unit}).\n"
                 f"{balance_hint(emp)}\n"
-                "يمكنك استخدام الموافقة الاستثنائية إذا رأيت ذلك مناسباً."
+                "يمكنك رفض الطلب أو تحويله إلى إجازة بدون راتب والموافقة عليه."
             ),
         )
 
-    exceptional = shortage > 0
-    approved_by = approver_name + (EXCEPTIONAL_SUFFIX if exceptional else '')
+    converted = shortage > 0 and convert_to_unpaid
+    approved_by = approver_name + (UNPAID_SUFFIX if converted else '')
     try:
         if not _claim(req_id, STATUS_APPROVED, approved_by):
             session.rollback()
             return ActionResult(ok=False, request=req, error="تمت معالجة الطلب مسبقاً من قبل مدير آخر.")
-        deduct_balance(emp, req.leave_type, amount, force=True)
+        if converted:
+            req.leave_type = UNPAID
+        else:
+            deduct_balance(emp, req.leave_type, amount)
         session.commit()
     except Exception:
         session.rollback()
         raise
     session.refresh(req)
-    return ActionResult(ok=True, request=req, amount=amount, shortage=shortage, unit=unit, exceptional=exceptional)
+    return ActionResult(ok=True, request=req, amount=amount, shortage=shortage, unit=unit, converted_to_unpaid=converted)
 
 
 def reject_request(req_id: int, approver_name: str) -> ActionResult:
@@ -284,7 +294,7 @@ def delete_request(req_id: int) -> Tuple[Optional[int], bool]:
     telegram_id = req.employee.telegram_id
     restored = False
     try:
-        if req.status == STATUS_APPROVED:
+        if req.status == STATUS_APPROVED and req.leave_type != UNPAID:
             amount, _ = request_amount(req)
             restore_balance(req.employee, req.leave_type, amount)
             restored = True
@@ -297,18 +307,20 @@ def delete_request(req_id: int) -> Tuple[Optional[int], bool]:
 
 
 def create_approved_request(emp: Employee, leave_type, start_date, end_date, start_time, end_time,
-                            reason, approver_name, force=False) -> ActionResult:
-    """Admin adds a leave directly (already approved)."""
-    amount, unit = requested_amount(leave_type, start_date, end_date, start_time, end_time)
-    shortage = max(0.0, amount - current_balance(emp, leave_type))
-    if shortage > 0 and not force:
+                            reason, approver_name) -> ActionResult:
+    """Admin adds a leave directly (already approved). Unpaid leave skips the balance."""
+    amount, shortage, unit = shortage_for(emp, leave_type, start_date, end_date, start_time, end_time)
+    if shortage > 0:
         return ActionResult(
-            ok=False, needs_force=True, amount=amount, shortage=shortage, unit=unit,
-            error=f"رصيد الموظف غير كافٍ (المطلوب {fmt(amount)} {unit}، المتوفر {fmt(current_balance(emp, leave_type))} {unit}).\n{balance_hint(emp)}",
+            ok=False, needs_unpaid=True, amount=amount, shortage=shortage, unit=unit,
+            error=(
+                f"رصيد الموظف غير كافٍ (المطلوب {fmt(amount)} {unit}، المتوفر {fmt(current_balance(emp, leave_type))} {unit}).\n"
+                f"{balance_hint(emp)}\n"
+                "اختر نوع الإجازة \"بدون راتب\" إذا أردت تسجيلها دون خصم من الرصيد."
+            ),
         )
-    exceptional = shortage > 0
     try:
-        deduct_balance(emp, leave_type, amount, force=True)
+        deduct_balance(emp, leave_type, amount)
         req = LeaveRequest(
             employee_id=emp.id,
             leave_type=leave_type,
@@ -319,14 +331,14 @@ def create_approved_request(emp: Employee, leave_type, start_date, end_date, sta
             reason=reason,
             status=STATUS_APPROVED,
             replacement_approval_status='not_required',
-            approved_by=approver_name + (EXCEPTIONAL_SUFFIX if exceptional else ''),
+            approved_by=approver_name,
         )
         session.add(req)
         session.commit()
     except Exception:
         session.rollback()
         raise
-    return ActionResult(ok=True, request=req, amount=amount, shortage=shortage, unit=unit, exceptional=exceptional)
+    return ActionResult(ok=True, request=req, amount=amount, unit=unit)
 
 
 # --------------------------------------------------------------------------

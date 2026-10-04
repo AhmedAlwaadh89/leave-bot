@@ -100,6 +100,8 @@ def generate_csrf_token():
 app.jinja_env.globals['csrf_token'] = generate_csrf_token
 app.jinja_env.globals['fmt'] = logic.fmt
 app.jinja_env.globals['STATUS_LABELS'] = logic.STATUS_LABELS
+app.jinja_env.globals['LEAVE_TYPES'] = logic.LEAVE_TYPES
+app.jinja_env.globals['UNPAID'] = logic.UNPAID
 
 
 @app.before_request
@@ -148,10 +150,10 @@ def parse_float(value, field_label, minimum=0.0):
 def parse_leave_period(form):
     """Returns (leave_type, start_date, end_date, start_time, end_time) or raises ValueError."""
     leave_type = form.get('leave_type')
-    if leave_type not in (logic.DAILY, logic.HOURLY):
+    if leave_type not in logic.LEAVE_TYPES:
         raise ValueError("نوع الإجازة غير صالح.")
     start_date = parse_date(form.get('start_date'), "تاريخ البدء")
-    if leave_type == logic.DAILY:
+    if leave_type in (logic.DAILY, logic.UNPAID):
         end_date = parse_date(form.get('end_date') or form.get('start_date'), "تاريخ الانتهاء")
         if end_date < start_date:
             raise ValueError("تاريخ الانتهاء لا يمكن أن يكون قبل تاريخ البدء.")
@@ -185,15 +187,20 @@ def index():
 @app.route('/approve/<int:request_id>', methods=['POST'])
 @requires_auth
 def approve_request(request_id):
-    force = request.form.get('force') == '1'
-    result = logic.approve_request(request_id, WEB_ADMIN_LABEL, force=force)
+    convert = request.form.get('convert_unpaid') == '1'
+    result = logic.approve_request(request_id, WEB_ADMIN_LABEL, convert_to_unpaid=convert)
     if not result.ok:
-        flash(result.error, "warning" if result.needs_force else "error")
+        flash(result.error, "warning" if result.needs_unpaid else "error")
         return redirect(url_for('index'))
 
     req = result.request
     employee = req.employee
-    note = " (موافقة استثنائية)" if result.exceptional else ""
+    if result.converted_to_unpaid:
+        note = " (تم تحويلها إلى إجازة بدون راتب)"
+    elif req.leave_type == logic.UNPAID:
+        note = " (إجازة بدون راتب)"
+    else:
+        note = ""
     flash(f"تمت الموافقة على الطلب #{request_id}{note}.", "success")
     send_notification(
         employee.telegram_id,
@@ -521,10 +528,10 @@ def export_reports():
     holidays = logic.get_holidays()
     for req in results:
         replacement_name = req.replacement_employee.full_name if req.replacement_employee else "لا يوجد"
-        if req.leave_type == logic.DAILY:
-            duration = f"{logic.calculate_leave_days(req.start_date, req.end_date, holidays)} يوم"
-        else:
+        if req.start_time and req.end_time:
             duration = f"{logic.fmt(logic.calculate_leave_hours(req.start_time, req.end_time))} ساعة"
+        else:
+            duration = f"{logic.calculate_leave_days(req.start_date, req.end_date, holidays)} يوم"
         cw.writerow([
             req.id,
             req.employee.full_name,
@@ -563,17 +570,16 @@ def admin_add_leave():
             return render_template('admin_add_leave.html', employees=employees)
 
         reason = (request.form.get('reason') or '').strip()
-        force = 'ignore_balance' in request.form
 
         result = logic.create_approved_request(
             employee, leave_type, start_date, end_date, start_time, end_time,
-            reason=f"{reason} [تمت الإضافة بواسطة الإدارة]", approver_name=WEB_ADMIN_LABEL, force=force,
+            reason=f"{reason} [تمت الإضافة بواسطة الإدارة]", approver_name=WEB_ADMIN_LABEL,
         )
         if not result.ok:
             flash(result.error, "warning")
             return render_template('admin_add_leave.html', employees=employees)
 
-        note = " (استثنائي: تجاوز الرصيد)" if result.exceptional else ""
+        note = " (بدون راتب)" if leave_type == logic.UNPAID else ""
         flash(f"تم إضافة الإجازة والموافقة عليها بنجاح{note}.", "success")
         send_notification(
             employee.telegram_id,

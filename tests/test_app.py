@@ -68,19 +68,35 @@ class TestApp(unittest.TestCase):
 
     @patch('app.finalize_leave_notifications')
     @patch('app.send_notification')
-    def test_approve_insufficient_then_force(self, mock_send, mock_finalize):
+    def test_approve_insufficient_then_convert_unpaid(self, mock_send, mock_finalize):
         employee, req = self._pending(223, days=0.0)
-        employee.unused_daily_carryover = 2.0
-        self.session.commit()
-        self.post(f'/approve/{req.id}')
-        self.assertEqual(self.session.get(LeaveRequest, req.id).status, 'pending')
+        req_id, emp_id = req.id, employee.id
+        self.post(f'/approve/{req_id}')
+        self.assertEqual(self.session.get(LeaveRequest, req_id).status, 'pending')
         mock_send.assert_not_called()
 
-        self.post(f'/approve/{req.id}', {'force': '1'})
-        req = self.session.get(LeaveRequest, req.id)
+        self.post(f'/approve/{req_id}', {'convert_unpaid': '1'})
+        req = self.session.get(LeaveRequest, req_id)
         self.assertEqual(req.status, 'approved')
-        self.assertIn('استثنائي', req.approved_by)
-        self.assertEqual(self.session.get(Employee, employee.id).unused_daily_carryover, 1.0)
+        self.assertEqual(req.leave_type, 'بدون راتب')
+        self.assertEqual(self.session.get(Employee, emp_id).daily_leave_balance, 0.0)
+
+    def test_admin_add_leave_blocks_without_balance_but_allows_unpaid(self):
+        emp = Employee(telegram_id=224, full_name="Zero", status='approved', daily_leave_balance=0.0, hourly_leave_balance=0.0)
+        self.session.add(emp)
+        self.session.commit()
+        emp_id = emp.id
+        form = {'employee_id': str(emp_id), 'leave_type': 'يومية', 'start_date': '2026-10-04', 'end_date': '2026-10-04', 'reason': 'x'}
+        response = self.post('/admin/add_leave', form)
+        self.assertEqual(response.status_code, 200)  # re-rendered with warning
+        self.assertEqual(self.session.query(LeaveRequest).count(), 0)
+        with patch('app.send_notification'):
+            response = self.post('/admin/add_leave', dict(form, leave_type='بدون راتب'))
+        self.assertEqual(response.status_code, 302)
+        req = self.session.query(LeaveRequest).one()
+        self.assertEqual(req.leave_type, 'بدون راتب')
+        self.assertEqual(req.status, 'approved')
+        self.assertEqual(self.session.get(Employee, emp_id).daily_leave_balance, 0.0)
 
     @patch('app.finalize_leave_notifications')
     @patch('app.send_notification')

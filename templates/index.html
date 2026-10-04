@@ -19,6 +19,7 @@
                 <p class="text-muted small mb-3">
                     سياسة الرصيد: حصة شهرية (افتراضياً 2 يوم و 4 ساعات) تتجدد أول كل شهر بدون تراكم.
                     ما لم يُستخدم يُسجَّل كملاحظة للإدارة فقط. أيام العمل من السبت إلى الخميس.
+                    لا يمكن للموظف تقديم طلب يتجاوز رصيده؛ يُعرض عليه تحويله إلى إجازة بدون راتب (لا تُخصم من الرصيد).
                 </p>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
@@ -51,9 +52,9 @@
                                 <td>#{{ request.id }}</td>
                                 <td>{{ emp.full_name }}</td>
                                 <td><span class="badge bg-secondary">{{ emp.department or 'غير محدد' }}</span></td>
-                                <td>{{ request.leave_type }}</td>
+                                <td>{% if request.leave_type == UNPAID %}<span class="badge bg-dark">💸 {{ request.leave_type }}</span>{% else %}{{ request.leave_type }}{% endif %}</td>
                                 <td>
-                                    {% if request.leave_type == 'يومية' %}
+                                    {% if not request.start_time %}
                                     <small class="text-muted">من:</small> {{ request.start_date }}<br>
                                     <small class="text-muted">إلى:</small> {{ request.end_date }}
                                     {% else %}
@@ -105,12 +106,14 @@
                                             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-success btn-sm" title="موافقة">✅</button>
                                         </form>
+                                        {% if request.leave_type != UNPAID %}
                                         <form method="POST" action="{{ url_for('approve_request', request_id=request.id) }}"
-                                            onsubmit="return confirm('موافقة استثنائية: سيتم تجاوز الرصيد الحالي للموظف. هل أنت متأكد؟')">
+                                            onsubmit="return confirm('سيتم تحويل الطلب إلى إجازة بدون راتب (لا تُخصم من الرصيد) والموافقة عليه. هل أنت متأكد؟')">
                                             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                            <input type="hidden" name="force" value="1">
-                                            <button type="submit" class="btn btn-warning btn-sm" title="موافقة استثنائية (تجاوز الرصيد)">⚠️</button>
+                                            <input type="hidden" name="convert_unpaid" value="1">
+                                            <button type="submit" class="btn btn-warning btn-sm" title="تحويل إلى بدون راتب والموافقة">💸</button>
                                         </form>
+                                        {% endif %}
                                         <form method="POST" action="{{ url_for('reject_request', request_id=request.id) }}">
                                             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-danger btn-sm" title="رفض">❌</button>

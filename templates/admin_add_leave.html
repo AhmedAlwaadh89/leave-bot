@@ -5,7 +5,8 @@
     <div class="col-md-8">
         <div class="card">
             <div class="card-header bg-white">
-                <h4 class="mb-0">➕ إضافة إجازة (استثناء)</h4>
+                <h4 class="mb-0">➕ إضافة إجازة بواسطة الإدارة</h4>
+                <small class="text-muted">إذا كان رصيد الموظف لا يكفي، اختر النوع "بدون راتب".</small>
             </div>
             <div class="card-body">
                 <form method="POST">
@@ -26,6 +27,7 @@
                         <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
                             <option value="يومية">يومية</option>
                             <option value="بالساعة">بالساعة</option>
+                            <option value="بدون راتب">بدون راتب (لا تُخصم من الرصيد)</option>
                         </select>
                     </div>
 
@@ -57,13 +59,6 @@
                             placeholder="أدخل سبب الإجازة أو ملاحظات الاستثناء..."></textarea>
                     </div>
 
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" name="ignore_balance" id="ignore_balance">
-                        <label class="form-check-label text-danger" for="ignore_balance">
-                            موافقة استثنائية: تجاوز الرصيد الحالي (يصبح الرصيد صفراً ويُخصم الفرق من ملاحظة "غير المستخدم سابقاً" إن وُجدت)
-                        </label>
-                    </div>
-
                     <button type="submit" class="btn btn-primary w-100">إضافة وموافقة فورية</button>
                 </form>
             </div>
@@ -77,7 +72,7 @@
         const endDateDiv = document.getElementById('end_date_div');
         const timeDiv = document.getElementById('time_div');
 
-        if (type === 'يومية') {
+        if (type !== 'بالساعة') {
             endDateDiv.style.display = 'block';
             timeDiv.style.display = 'none';
         } else {

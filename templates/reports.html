@@ -109,7 +109,7 @@
                                 <td>{{ req.employee.full_name }}</td>
                                 <td>{{ req.leave_type }}</td>
                                 <td>
-                                    {% if req.leave_type == 'يومية' %}
+                                    {% if not req.start_time %}
                                     {{ req.start_date }} ➡️ {{ req.end_date }}
                                     {% else %}
                                     {{ req.start_date }} ({{ req.start_time.strftime('%H:%M') if req.start_time }} - {{ req.end_time.strftime('%H:%M') if req.end_time }})
