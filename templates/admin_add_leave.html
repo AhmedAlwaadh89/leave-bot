@@ -5,17 +5,19 @@
     <div class="col-md-8">
         <div class="card">
             <div class="card-header bg-white">
-                <h4 class="mb-0">➕ إضافة إجازة (استثناء)</h4>
+                <h4 class="mb-0">➕ إضافة إجازة بواسطة الإدارة</h4>
+                <small class="text-muted">إذا كان رصيد الموظف لا يكفي، اختر النوع "بدون راتب".</small>
             </div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label">الموظف</label>
                         <select name="employee_id" class="form-select" required>
                             <option value="">اختر الموظف...</option>
                             {% for emp in employees %}
-                            <option value="{{ emp.id }}">{{ emp.full_name }} (رصيد: {{ emp.daily_leave_balance }} يوم |
-                                {{ emp.hourly_leave_balance }} ساعة)</option>
+                            <option value="{{ emp.id }}">{{ emp.full_name }} (رصيد: {{ fmt(emp.daily_leave_balance) }} يوم |
+                                {{ fmt(emp.hourly_leave_balance) }} ساعة{% if (emp.unused_daily_carryover or 0) > 0 or (emp.unused_hourly_carryover or 0) > 0 %} | غير مستخدم سابقاً: {{ fmt(emp.unused_daily_carryover) }} يوم / {{ fmt(emp.unused_hourly_carryover) }} ساعة{% endif %})</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -25,6 +27,7 @@
                         <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
                             <option value="يومية">يومية</option>
                             <option value="بالساعة">بالساعة</option>
+                            <option value="بدون راتب">بدون راتب (لا تُخصم من الرصيد)</option>
                         </select>
                     </div>
 
@@ -56,13 +59,6 @@
                             placeholder="أدخل سبب الإجازة أو ملاحظات الاستثناء..."></textarea>
                     </div>
 
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" name="ignore_balance" id="ignore_balance">
-                        <label class="form-check-label text-danger" for="ignore_balance">
-                            تجاهل تحذير الرصيد (خصم حتى لو أصبح بالسالب)
-                        </label>
-                    </div>
-
                     <button type="submit" class="btn btn-primary w-100">إضافة وموافقة فورية</button>
                 </form>
             </div>
@@ -76,7 +72,7 @@
         const endDateDiv = document.getElementById('end_date_div');
         const timeDiv = document.getElementById('time_div');
 
-        if (type === 'يومية') {
+        if (type !== 'بالساعة') {
             endDateDiv.style.display = 'block';
             timeDiv.style.display = 'none';
         } else {

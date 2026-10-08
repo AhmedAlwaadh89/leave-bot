@@ -1,6 +1,13 @@
 {% extends 'base.html' %}
 
 {% block content %}
+{# Per-row update forms live outside the table (a <form> inside <tr> is invalid HTML). #}
+{% for employee in employees %}
+<form id="upd{{ employee.id }}" action="{{ url_for('update_user', user_id=employee.id) }}" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+</form>
+{% endfor %}
+
 <div class="row">
     <div class="col-md-12">
         <div class="card">
@@ -11,6 +18,10 @@
                 </button>
             </div>
             <div class="card-body">
+                <p class="text-muted small mb-3">
+                    الحصة الشهرية تتجدد أول كل شهر بدون تراكم (الرصيد الحالي لا يتجاوز الحصة).
+                    عمود "غير مستخدم سابقاً" ملاحظة للإدارة فقط لتقدير الحالة، ولا يُخصم منه أبداً.
+                </p>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
                         <thead>
@@ -20,57 +31,85 @@
                                 <th>القسم</th>
                                 <th>الحالة</th>
                                 <th>مدير؟</th>
-                                <th>رصيد أيام</th>
-                                <th>رصيد ساعات</th>
-                                <th>تحديث البيانات</th>
+                                <th>الحصة الشهرية<br><small>أيام / ساعات</small></th>
+                                <th>الرصيد الحالي<br><small>أيام / ساعات</small></th>
+                                <th>غير مستخدم سابقاً 📝<br><small>أيام / ساعات</small></th>
+                                <th>آخر تجديد</th>
+                                <th>حفظ</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for employee in employees %}
+                            {% set f = 'upd' ~ employee.id %}
                             <tr>
-                                <td>{{ employee.id }}</td>
-                                <form action="{{ url_for('update_user', user_id=employee.id) }}" method="POST">
-                                    <td><input type="text" name="full_name" class="form-control form-control-sm"
-                                            value="{{ employee.full_name }}"></td>
-                                    <td><input type="text" name="department" class="form-control form-control-sm"
-                                            value="{{ employee.department or '' }}" placeholder="القسم"></td>
-                                    <td>
-                                        {% if employee.status == 'approved' %}
-                                        <span class="badge bg-success">نشط</span>
-                                        {% elif employee.status == 'pending' %}
-                                        <span class="badge bg-warning text-dark">انتظار</span>
-                                        {% else %}
-                                        <span class="badge bg-danger">محظور</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="is_manager" {% if
-                                                employee.is_manager %}checked{% endif %}>
-                                        </div>
-                                    </td>
-                                    <td><input type="number" step="0.5" name="daily_balance"
-                                            class="form-control form-control-sm"
-                                            value="{{ employee.daily_leave_balance }}" style="width: 80px;"></td>
-                                    <td><input type="number" step="0.5" name="hourly_balance"
-                                            class="form-control form-control-sm"
-                                            value="{{ employee.hourly_leave_balance }}" style="width: 80px;"></td>
-                                    <td>
-                                        <button type="submit" class="btn btn-primary btn-sm">حفظ</button>
-                                    </td>
-                                </form>
+                                <td>{{ employee.id }}<br><small class="text-muted" title="Telegram ID">{{ employee.telegram_id }}</small></td>
+                                <td><input type="text" name="full_name" form="{{ f }}" class="form-control form-control-sm"
+                                        value="{{ employee.full_name }}" required></td>
+                                <td><input type="text" name="department" form="{{ f }}" class="form-control form-control-sm"
+                                        value="{{ employee.department or '' }}" placeholder="القسم"></td>
                                 <td>
-                                    {% if employee.status == 'pending' %}
-                                    <a href="{{ url_for('approve_user_web', user_id=employee.id) }}"
-                                        class="btn btn-success btn-sm">موافقة</a>
-                                    <a href="{{ url_for('reject_user_web', user_id=employee.id) }}"
-                                        class="btn btn-danger btn-sm">رفض</a>
+                                    {% if employee.status == 'approved' %}
+                                    <span class="badge bg-success">نشط</span>
+                                    {% elif employee.status == 'pending' %}
+                                    <span class="badge bg-warning text-dark">انتظار</span>
                                     {% else %}
-                                    <a href="{{ url_for('reject_user_web', user_id=employee.id) }}"
-                                        class="btn btn-outline-danger btn-sm"
-                                        onclick="return confirm('هل أنت متأكد من حذف هذا الموظف؟')">حذف</a>
+                                    <span class="badge bg-danger">محظور</span>
                                     {% endif %}
+                                </td>
+                                <td>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="is_manager" form="{{ f }}"
+                                            {% if employee.is_manager %}checked{% endif %}>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1">
+                                        <input type="number" step="0.5" min="0" name="daily_quota" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.monthly_daily_leave_quota) }}" style="width: 70px;">
+                                        <input type="number" step="0.5" min="0" name="hourly_quota" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.monthly_hourly_leave_quota) }}" style="width: 70px;">
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1">
+                                        <input type="number" step="0.5" min="0" name="daily_balance" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.daily_leave_balance) }}" style="width: 70px;">
+                                        <input type="number" step="0.5" min="0" name="hourly_balance" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.hourly_leave_balance) }}" style="width: 70px;">
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1">
+                                        <input type="number" step="0.5" min="0" name="unused_daily" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.unused_daily_carryover) }}" style="width: 70px;">
+                                        <input type="number" step="0.5" min="0" name="unused_hourly" form="{{ f }}"
+                                            class="form-control form-control-sm" value="{{ fmt(employee.unused_hourly_carryover) }}" style="width: 70px;">
+                                    </div>
+                                </td>
+                                <td><small>{{ employee.last_renewal_date or '-' }}</small></td>
+                                <td>
+                                    <button type="submit" form="{{ f }}" class="btn btn-primary btn-sm">حفظ</button>
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1">
+                                        {% if employee.status == 'pending' %}
+                                        <form action="{{ url_for('approve_user_web', user_id=employee.id) }}" method="POST">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-success btn-sm">موافقة</button>
+                                        </form>
+                                        <form action="{{ url_for('reject_user_web', user_id=employee.id) }}" method="POST">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-danger btn-sm">رفض</button>
+                                        </form>
+                                        {% else %}
+                                        <form action="{{ url_for('reject_user_web', user_id=employee.id) }}" method="POST"
+                                            onsubmit="return confirm('هل أنت متأكد من حذف هذا الموظف وجميع طلباته؟')">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm">حذف</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -91,6 +130,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form action="{{ url_for('add_user_web') }}" method="POST">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="telegram_id" class="form-label">Telegram ID</label>
@@ -108,6 +148,7 @@
                         <input class="form-check-input" type="checkbox" id="is_manager" name="is_manager">
                         <label class="form-check-label" for="is_manager">تعيين كمدير</label>
                     </div>
+                    <p class="text-muted small mb-0">سيحصل الموظف فوراً على الحصة الشهرية الكاملة (2 يوم و 4 ساعات افتراضياً).</p>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إغلاق</button>

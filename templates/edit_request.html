@@ -9,6 +9,7 @@
             </div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label">الموظف</label>
                         <input type="text" class="form-control" value="{{ request.employee.full_name }}" disabled>
@@ -19,6 +20,8 @@
                         <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
                             <option value="يومية" {% if request.leave_type=='يومية' %}selected{% endif %}>يومية</option>
                             <option value="بالساعة" {% if request.leave_type=='بالساعة' %}selected{% endif %}>بالساعة
+                            </option>
+                            <option value="بدون راتب" {% if request.leave_type=='بدون راتب' %}selected{% endif %}>بدون راتب (لا تُخصم من الرصيد)
                             </option>
                         </select>
                     </div>
@@ -69,7 +72,7 @@
         const endDateDiv = document.getElementById('end_date_div');
         const timeDiv = document.getElementById('time_div');
 
-        if (type === 'يومية') {
+        if (type !== 'بالساعة') {
             endDateDiv.style.display = 'block';
             timeDiv.style.display = 'none';
         } else {
