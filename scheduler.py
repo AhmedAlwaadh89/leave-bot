@@ -26,6 +26,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+# httpx logs every Telegram API URL (which embeds the bot token) at INFO level. Never log that.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 RENEWAL_CHECK_TIME = os.getenv("RENEWAL_CHECK_TIME", "00:05")
 REMINDER_TIME = os.getenv("PENDING_REMINDER_TIME", "06:00")  # server time (UTC on most hosts)
