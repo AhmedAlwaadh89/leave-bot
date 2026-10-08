@@ -183,3 +183,60 @@ class TestMonthlyRenewal(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestEmployeeAdmin(unittest.TestCase):
+    def setUp(self):
+        self.session = new_session()
+
+    def tearDown(self):
+        self.session.remove()
+
+    def test_suspend_cancels_pending_and_blocks_last_manager(self):
+        boss = Employee(telegram_id=1, full_name="Boss", status='approved', is_manager=True)
+        emp = make_employee(self.session, tid=2)
+        self.session.add(boss)
+        self.session.commit()
+        req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 4))
+        res = logic.set_employee_status(emp.id, logic.EMP_SUSPENDED, acting_emp_id=boss.id)
+        self.assertTrue(res.ok)
+        self.assertEqual(emp.status, 'suspended')
+        self.assertEqual(self.session.get(LeaveRequest, req.id).status, 'cancelled')
+        # cannot suspend yourself nor the last manager
+        self.assertFalse(logic.set_employee_status(boss.id, logic.EMP_SUSPENDED, acting_emp_id=boss.id).ok)
+        self.assertFalse(logic.set_employee_status(boss.id, logic.EMP_SUSPENDED).ok)
+        # reactivation grants a fresh quota
+        emp.daily_leave_balance = 0.0
+        self.session.commit()
+        self.assertTrue(logic.set_employee_status(emp.id, logic.EMP_APPROVED).ok)
+        self.assertEqual(emp.status, 'approved')
+        self.assertEqual(emp.daily_leave_balance, 2.0)
+
+    def test_delete_employee_removes_requests_and_clears_replacement(self):
+        boss = Employee(telegram_id=1, full_name="Boss", status='approved', is_manager=True)
+        self.session.add(boss)
+        a = make_employee(self.session, tid=2)
+        b = make_employee(self.session, tid=3)
+        req_a = make_request(self.session, a, date(2026, 10, 4), date(2026, 10, 4))
+        req_b = make_request(self.session, b, date(2026, 10, 5), date(2026, 10, 5))
+        req_b.replacement_employee_id = a.id
+        self.session.commit()
+        req_a_id, req_b_id = req_a.id, req_b.id
+        ok, msg, tid = logic.delete_employee(a.id, acting_emp_id=boss.id)
+        self.assertTrue(ok)
+        self.assertEqual(tid, 2)
+        self.assertIsNone(self.session.get(LeaveRequest, req_a_id))
+        self.assertIsNone(self.session.get(LeaveRequest, req_b_id).replacement_employee_id)
+        self.assertFalse(logic.delete_employee(boss.id, acting_emp_id=boss.id)[0])
+        self.assertFalse(logic.delete_employee(boss.id)[0])
+
+    def test_reset_everything(self):
+        emp = make_employee(self.session, days=0.5, hours=1.0, unused_d=9.0)
+        make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 4))
+        deleted = logic.reset_everything()
+        self.assertEqual(deleted, 1)
+        self.assertEqual(self.session.query(LeaveRequest).count(), 0)
+        self.assertEqual(emp.daily_leave_balance, 2.0)
+        self.assertEqual(emp.hourly_leave_balance, 4.0)
+        self.assertEqual(emp.unused_daily_carryover, 0.0)
+        self.assertEqual(emp.last_renewal_date, date.today())

@@ -155,6 +155,24 @@ class TestApp(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Employee 888', response.data.decode('utf-8-sig'))
 
+    @patch('app.send_notification')
+    def test_suspend_activate_delete_and_reset(self, mock_send):
+        boss = Employee(telegram_id=1, full_name="Boss", status='approved', is_manager=True)
+        emp = Employee(telegram_id=999, full_name="S", status='approved', daily_leave_balance=2.0, hourly_leave_balance=4.0)
+        self.session.add_all([boss, emp])
+        self.session.commit()
+        emp_id = emp.id
+        self.post(f'/suspend_user/{emp_id}')
+        self.assertEqual(self.session.get(Employee, emp_id).status, 'suspended')
+        self.post(f'/activate_user/{emp_id}')
+        self.assertEqual(self.session.get(Employee, emp_id).status, 'approved')
+        self.post('/reset_all', {'confirm': 'wrong'})
+        self.assertIsNotNone(self.session.get(Employee, emp_id))
+        self.post(f'/reject_user/{emp_id}')
+        self.assertIsNone(self.session.get(Employee, emp_id))
+        response = self.post('/reset_all', {'confirm': 'RESET'})
+        self.assertEqual(response.status_code, 302)
+
     def test_health(self):
         self.assertEqual(self.client.get('/health').status_code, 200)
 

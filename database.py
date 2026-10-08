@@ -34,7 +34,7 @@ class Employee(Base):
     full_name = Column(String, nullable=False)
     department = Column(String, nullable=True)
     is_manager = Column(Boolean, default=False)
-    status = Column(String, default='pending')  # pending / approved
+    status = Column(String, default='pending')  # pending / approved / suspended
 
     # Usable balance for the current month
     daily_leave_balance = Column(Float, default=0.0)
@@ -97,6 +97,13 @@ class Holiday(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     date = Column(Date, nullable=False, unique=True)
+
+
+class SystemSetting(Base):
+    """Key/value store for one-time data tasks and small settings."""
+    __tablename__ = 'system_settings'
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)
 
 
 # --------------------------------------------------------------------------
@@ -210,6 +217,50 @@ def run_migrations(target_engine=None):
 
 
 run_migrations()
+
+
+# --------------------------------------------------------------------------
+# One-time data tasks (run once per database, tracked in system_settings)
+# --------------------------------------------------------------------------
+RESET_MARKER = 'reset_history_and_balances_2026_10'
+
+
+def reset_history_and_balances(db_session, today=None):
+    """
+    Wipe all leave history and start every employee fresh with the full
+    monthly quota and an empty "unused" note. Used once on upgrade and by the
+    dashboard's reset action.
+    """
+    from datetime import date as _date
+    today = today or _date.today()
+    deleted = db_session.query(LeaveRequest).delete()
+    db_session.query(NotificationLog).delete()
+    for emp in db_session.query(Employee).all():
+        emp.daily_leave_balance = float(emp.monthly_daily_leave_quota or DEFAULT_MONTHLY_DAYS)
+        emp.hourly_leave_balance = float(emp.monthly_hourly_leave_quota or DEFAULT_MONTHLY_HOURS)
+        emp.unused_daily_carryover = 0.0
+        emp.unused_hourly_carryover = 0.0
+        emp.last_renewal_date = today
+    db_session.commit()
+    return deleted
+
+
+def run_one_time_tasks():
+    db_session = Session()
+    try:
+        if db_session.get(SystemSetting, RESET_MARKER) is None:
+            deleted = reset_history_and_balances(db_session)
+            db_session.add(SystemSetting(key=RESET_MARKER, value=str(datetime.utcnow())))
+            db_session.commit()
+            logger.info("One-time reset applied: %d leave request(s) removed, all balances set to quota.", deleted)
+    except Exception as e:
+        db_session.rollback()
+        logger.error("One-time task failed: %s", e)
+    finally:
+        db_session.close()
+
+
+run_one_time_tasks()
 
 if __name__ == "__main__":
     print("Database tables created/updated successfully.")
