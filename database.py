@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session, declarative_base
 
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Base = declarative_base()
