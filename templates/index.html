@@ -9,7 +9,7 @@
     <div class="col-md-12">
         <div class="card">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <h4 class="mb-0">📋 طلبات الإجازة الحديثة</h4>
+                <h4 class="mb-0">📋 طلبات الإجازة {% if not show_all and total > limit %}<small class="text-muted">(آخر {{ limit }} من {{ total }} · <a href="{{ url_for('index', all=1) }}">عرض الكل</a>)</small>{% else %}<small class="text-muted">({{ total }})</small>{% endif %}</h4>
                 <button id="deleteSelectedBtn" class="btn btn-danger btn-sm" style="display: none;"
                     onclick="deleteSelected()">
                     🗑️ حذف المحدد (<span id="selectedCount">0</span>)

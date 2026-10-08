@@ -53,8 +53,10 @@
                                     <span class="badge bg-success">نشط</span>
                                     {% elif employee.status == 'pending' %}
                                     <span class="badge bg-warning text-dark">انتظار</span>
+                                    {% elif employee.status == 'suspended' %}
+                                    <span class="badge bg-secondary">موقوف</span>
                                     {% else %}
-                                    <span class="badge bg-danger">محظور</span>
+                                    <span class="badge bg-danger">{{ employee.status }}</span>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -103,10 +105,22 @@
                                             <button type="submit" class="btn btn-danger btn-sm">رفض</button>
                                         </form>
                                         {% else %}
-                                        <form action="{{ url_for('reject_user_web', user_id=employee.id) }}" method="POST"
-                                            onsubmit="return confirm('هل أنت متأكد من حذف هذا الموظف وجميع طلباته؟')">
+                                        {% if employee.status == 'suspended' %}
+                                        <form action="{{ url_for('activate_user_web', user_id=employee.id) }}" method="POST">
                                             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-outline-danger btn-sm">حذف</button>
+                                            <button type="submit" class="btn btn-success btn-sm" title="إعادة تفعيل الحساب">▶ تفعيل</button>
+                                        </form>
+                                        {% else %}
+                                        <form action="{{ url_for('suspend_user_web', user_id=employee.id) }}" method="POST"
+                                            onsubmit="return confirm('سيتم إيقاف حساب الموظف ولن يستطيع استخدام البوت، وتُلغى طلباته المعلّقة. متابعة؟')">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-secondary btn-sm" title="إيقاف الحساب مع إبقاء السجل">⏸ إيقاف</button>
+                                        </form>
+                                        {% endif %}
+                                        <form action="{{ url_for('reject_user_web', user_id=employee.id) }}" method="POST"
+                                            onsubmit="return confirm('هل أنت متأكد من حذف هذا الموظف وجميع طلباته نهائياً؟')">
+                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm">🗑 حذف</button>
                                         </form>
                                         {% endif %}
                                     </div>
@@ -118,6 +132,19 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<div class="card border-danger mt-4">
+    <div class="card-header bg-white text-danger">⚠️ منطقة الخطر</div>
+    <div class="card-body">
+        <p class="small text-muted mb-2">تصفير النظام: حذف كل طلبات الإجازة السابقة وإعادة رصيد كل الموظفين إلى الحصة الشهرية الكاملة مع تصفير ملاحظة "غير مستخدم سابقاً". لا يمكن التراجع.</p>
+        <form action="{{ url_for('reset_all_web') }}" method="POST" class="d-flex gap-2 align-items-center"
+            onsubmit="return confirm('سيتم حذف كل سجل الإجازات نهائياً. هل أنت متأكد؟')">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="text" name="confirm" class="form-control form-control-sm" placeholder="اكتب RESET للتأكيد" style="width: 220px;" required>
+            <button type="submit" class="btn btn-danger btn-sm">تصفير السجل والأرصدة</button>
+        </form>
     </div>
 </div>
 

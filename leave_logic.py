@@ -406,3 +406,87 @@ def pending_requests_for_review():
         .order_by(LeaveRequest.id.asc())
         .all()
     )
+
+
+# --------------------------------------------------------------------------
+# Employee administration (shared by bot and web)
+# --------------------------------------------------------------------------
+EMP_PENDING = 'pending'
+EMP_APPROVED = 'approved'
+EMP_SUSPENDED = 'suspended'
+
+EMP_STATUS_LABELS = {
+    EMP_PENDING: 'بانتظار الموافقة',
+    EMP_APPROVED: 'نشط',
+    EMP_SUSPENDED: 'موقوف',
+}
+
+
+def _active_manager_count(exclude_id=None):
+    q = session.query(Employee).filter_by(is_manager=True, status=EMP_APPROVED)
+    if exclude_id is not None:
+        q = q.filter(Employee.id != exclude_id)
+    return q.count()
+
+
+def set_employee_status(emp_id: int, new_status: str, acting_emp_id: Optional[int] = None) -> ActionResult:
+    """Suspend or re-activate an employee. A suspended employee cannot use the bot."""
+    emp = session.get(Employee, emp_id)
+    if not emp:
+        return ActionResult(ok=False, error="الموظف غير موجود.")
+    if new_status not in (EMP_APPROVED, EMP_SUSPENDED):
+        return ActionResult(ok=False, error="حالة غير صالحة.")
+    if acting_emp_id is not None and emp.id == acting_emp_id and new_status == EMP_SUSPENDED:
+        return ActionResult(ok=False, error="لا يمكنك إيقاف حسابك أنت.")
+    if new_status == EMP_SUSPENDED and emp.is_manager and _active_manager_count(exclude_id=emp.id) == 0:
+        return ActionResult(ok=False, error="لا يمكن إيقاف آخر مدير نشط في النظام.")
+    try:
+        if new_status == EMP_APPROVED and emp.status != EMP_APPROVED:
+            # Re-activation (or first approval): fresh quota for the current month
+            grant_initial_balance(emp)
+        emp.status = new_status
+        if new_status == EMP_SUSPENDED:
+            # Pending requests of a suspended employee are cancelled
+            session.query(LeaveRequest).filter(
+                LeaveRequest.employee_id == emp.id, LeaveRequest.status == STATUS_PENDING
+            ).update({LeaveRequest.status: STATUS_CANCELLED, LeaveRequest.approved_by: 'إيقاف الحساب'}, synchronize_session=False)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return ActionResult(ok=True)
+
+
+def delete_employee(emp_id: int, acting_emp_id: Optional[int] = None) -> Tuple[bool, str, Optional[int]]:
+    """
+    Permanently delete an employee with all their requests.
+    Returns (ok, message, telegram_id).
+    """
+    from database import NotificationLog
+    emp = session.get(Employee, emp_id)
+    if not emp:
+        return False, "الموظف غير موجود.", None
+    if acting_emp_id is not None and emp.id == acting_emp_id:
+        return False, "لا يمكنك حذف حسابك أنت.", None
+    if emp.is_manager and emp.status == EMP_APPROVED and _active_manager_count(exclude_id=emp.id) == 0:
+        return False, "لا يمكن حذف آخر مدير نشط في النظام.", None
+    name, tid = emp.full_name, emp.telegram_id
+    try:
+        session.query(LeaveRequest).filter(LeaveRequest.employee_id == emp.id).delete()
+        session.query(LeaveRequest).filter(LeaveRequest.replacement_employee_id == emp.id).update(
+            {LeaveRequest.replacement_employee_id: None}, synchronize_session=False
+        )
+        session.query(NotificationLog).filter(NotificationLog.manager_telegram_id == tid).delete()
+        session.query(NotificationLog).filter_by(request_type='user', target_id=emp.id).delete()
+        session.delete(emp)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return True, f"تم حذف الموظف {name} وجميع طلباته.", tid
+
+
+def reset_everything():
+    """Dashboard action: wipe history and give everyone a fresh quota."""
+    from database import reset_history_and_balances
+    return reset_history_and_balances(session)

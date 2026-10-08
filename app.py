@@ -20,6 +20,9 @@ import notifier  # noqa: E402
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+# httpx logs every Telegram API URL (which embeds the bot token) at INFO level. Never log that.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -27,6 +30,7 @@ if not os.getenv("FLASK_SECRET_KEY"):
     logger.warning("FLASK_SECRET_KEY not set: a random key is used, web sessions reset on restart.")
 
 WEB_ADMIN_LABEL = "الإدارة (Web)"
+INDEX_LIMIT = 200  # requests shown on the dashboard home by default
 
 
 @app.teardown_appcontext
@@ -102,6 +106,7 @@ app.jinja_env.globals['fmt'] = logic.fmt
 app.jinja_env.globals['STATUS_LABELS'] = logic.STATUS_LABELS
 app.jinja_env.globals['LEAVE_TYPES'] = logic.LEAVE_TYPES
 app.jinja_env.globals['UNPAID'] = logic.UNPAID
+app.jinja_env.globals['EMP_STATUS_LABELS'] = logic.EMP_STATUS_LABELS
 
 
 @app.before_request
@@ -173,15 +178,32 @@ calculate_leave_hours = logic.calculate_leave_hours
 # --- Health Check (for UptimeRobot) ---
 @app.route('/health')
 def health():
-    return {"status": "ok", "bot": "running" if token else "disabled"}, 200
+    """Liveness check for uptime monitors and the keep-alive ping."""
+    from sqlalchemy import text as sql_text
+    db_ok = True
+    try:
+        session.execute(sql_text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    threads = {t.name for t in threading.enumerate()}
+    body = {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "error",
+        "bot": "running" if ("telegram-bot" in threads) else ("disabled" if not token else "stopped"),
+        "scheduler": "running" if ("scheduler" in threads) else "stopped",
+    }
+    return body, (200 if db_ok else 503)
 
 
 # --- Main Routes ---
 @app.route('/')
 @requires_auth
 def index():
-    all_requests = session.query(LeaveRequest).order_by(LeaveRequest.id.desc()).all()
-    return render_template('index.html', requests=all_requests, balance_hint=logic.balance_hint)
+    show_all = request.args.get('all') == '1'
+    query = session.query(LeaveRequest).order_by(LeaveRequest.id.desc())
+    total = query.count()
+    all_requests = query.all() if show_all else query.limit(INDEX_LIMIT).all()
+    return render_template('index.html', requests=all_requests, total=total, show_all=show_all, limit=INDEX_LIMIT)
 
 
 @app.route('/approve/<int:request_id>', methods=['POST'])
@@ -357,14 +379,15 @@ def update_user(user_id):
 @requires_auth
 def approve_user_web(user_id):
     user = session.get(Employee, user_id)
-    if user and user.status == 'pending':
-        user.status = 'approved'
-        logic.grant_initial_balance(user)
-        session.commit()
-        flash(f"تمت الموافقة على الموظف {user.full_name}.", "success")
-        send_notification(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. يمكنك الآن استخدام الأمر /start للبدء.")
-        session.query(NotificationLog).filter_by(request_type='user', target_id=user_id).delete()
-        session.commit()
+    if user and user.status == logic.EMP_PENDING:
+        res = logic.set_employee_status(user_id, logic.EMP_APPROVED)
+        if res.ok:
+            flash(f"تمت الموافقة على الموظف {user.full_name}.", "success")
+            send_notification(user.telegram_id, "تهانينا! تمت الموافقة على حسابك. يمكنك الآن استخدام الأمر /start للبدء.")
+            session.query(NotificationLog).filter_by(request_type='user', target_id=user_id).delete()
+            session.commit()
+        else:
+            flash(res.error, "error")
     return redirect(url_for('manage_employees'))
 
 
@@ -373,26 +396,46 @@ def approve_user_web(user_id):
 def reject_user_web(user_id):
     user = session.get(Employee, user_id)
     if not user:
+        flash("الموظف غير موجود.", "error")
         return redirect(url_for('manage_employees'))
-    user_name = user.full_name
-    user_telegram_id = user.telegram_id
-    was_pending = user.status == 'pending'
-    try:
-        session.query(LeaveRequest).filter(LeaveRequest.employee_id == user.id).delete()
-        session.query(LeaveRequest).filter(LeaveRequest.replacement_employee_id == user.id).update(
-            {LeaveRequest.replacement_employee_id: None}
-        )
-        session.query(NotificationLog).filter(NotificationLog.manager_telegram_id == user_telegram_id).delete()
-        session.query(NotificationLog).filter_by(request_type='user', target_id=user.id).delete()
-        session.delete(user)
-        session.commit()
-        flash(f"تم حذف الموظف {user_name}.", "success")
-        if was_pending:
-            send_notification(user_telegram_id, "نأسف، تم رفض طلب تسجيلك.")
-    except Exception as e:
-        session.rollback()
-        logger.exception("Failed deleting employee %s", user_id)
-        flash(f"حدث خطأ أثناء حذف الموظف: {e}", "error")
+    was_pending = user.status == logic.EMP_PENDING
+    ok, msg, tid = logic.delete_employee(user_id)
+    flash(msg, "success" if ok else "error")
+    if ok and tid:
+        send_notification(tid, "نأسف، تم رفض طلب تسجيلك." if was_pending else "تم حذف حسابك من نظام الإجازات من قبل الإدارة.")
+    return redirect(url_for('manage_employees'))
+
+
+@app.route('/suspend_user/<int:user_id>', methods=['POST'])
+@requires_auth
+def suspend_user_web(user_id):
+    res = logic.set_employee_status(user_id, logic.EMP_SUSPENDED)
+    flash("تم إيقاف حساب الموظف." if res.ok else res.error, "success" if res.ok else "error")
+    if res.ok:
+        user = session.get(Employee, user_id)
+        send_notification(user.telegram_id, "تم إيقاف حسابك في نظام الإجازات من قبل الإدارة.")
+    return redirect(url_for('manage_employees'))
+
+
+@app.route('/activate_user/<int:user_id>', methods=['POST'])
+@requires_auth
+def activate_user_web(user_id):
+    res = logic.set_employee_status(user_id, logic.EMP_APPROVED)
+    flash("تم تفعيل حساب الموظف." if res.ok else res.error, "success" if res.ok else "error")
+    if res.ok:
+        user = session.get(Employee, user_id)
+        send_notification(user.telegram_id, "تم تفعيل حسابك في نظام الإجازات. اضغط /start للبدء.")
+    return redirect(url_for('manage_employees'))
+
+
+@app.route('/reset_all', methods=['POST'])
+@requires_auth
+def reset_all_web():
+    if request.form.get('confirm') != 'RESET':
+        flash("لم يتم التأكيد. اكتب RESET في حقل التأكيد.", "error")
+        return redirect(url_for('manage_employees'))
+    deleted = logic.reset_everything()
+    flash(f"تم حذف {deleted} طلب(ات) وإعادة كل الأرصدة إلى الحصة الشهرية.", "success")
     return redirect(url_for('manage_employees'))
 
 

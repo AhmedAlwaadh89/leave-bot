@@ -27,6 +27,9 @@ import leave_logic as logic  # noqa: E402
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+# httpx logs every Telegram API URL (which embeds the bot token) at INFO level. Never log that.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Conversation states
 (
@@ -37,7 +40,7 @@ logger = logging.getLogger(__name__)
     UNPAID_CONFIRM,
 ) = range(14)
 
-ADMIN_CALLBACK_PATTERN = r'^(approve_user_|reject_user_|admin_approve_|admin_reject_|admin_unpaid_)'
+ADMIN_CALLBACK_PATTERN = r'^(approve_user_|reject_user_|admin_approve_|admin_reject_|admin_unpaid_|emp_suspend_|emp_activate_|emp_delask_|emp_delete_|emp_list)'
 
 
 # --------------------------------------------------------------------------
@@ -99,7 +102,7 @@ def get_main_menu_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
 def get_admin_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("مراجعة الطلبات", callback_data='admin_review_leaves')],
-        [InlineKeyboardButton("إدارة الموظفين", callback_data='admin_manage_employees')],
+        [InlineKeyboardButton("👥 إدارة الموظفين", callback_data='admin_manage_employees')],
         [InlineKeyboardButton("➕ إضافة موظف جديد", callback_data='admin_add_employee')],
         [InlineKeyboardButton("📊 أرصدة الموظفين", callback_data='admin_balances')],
         [InlineKeyboardButton("📥 تقرير الإجازات (Excel)", callback_data='admin_export_report')],
@@ -212,6 +215,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"أهلاً بعودتك، {employee.full_name}! اختر أحد الخيارات:",
                 reply_markup=get_main_menu_keyboard(user.id),
             )
+        elif employee.status == logic.EMP_SUSPENDED:
+            await update.message.reply_text("تم إيقاف حسابك من قبل الإدارة. تواصل مع مديرك لإعادة التفعيل.")
         else:
             await update.message.reply_text("حسابك لا يزال قيد المراجعة من قبل الإدارة. سيتم إعلامك عند الموافقة.")
         return MAIN_MENU
@@ -335,7 +340,7 @@ async def leave_start_date_handler(update: Update, context: ContextTypes.DEFAULT
     context.user_data['start_date'] = leave_date
     if context.user_data['leave_type'] == logic.HOURLY:
         if not logic.is_working_day(leave_date):
-            await update.message.reply_text("هذا اليوم عطلة (جمعة أو عطلة رسمية). اختر يوم عمل آخر:")
+            await update.message.reply_text("هذا اليوم عطلة. اختر يوم عمل آخر:")
             return LEAVE_START_DATE
         context.user_data['end_date'] = leave_date
         await update.message.reply_text("أدخل وقت البدء (HH:MM بصيغة 24 ساعة):")
@@ -357,10 +362,10 @@ async def leave_end_date_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     days = logic.calculate_leave_days(context.user_data['start_date'], end_date)
     if days == 0:
-        await update.message.reply_text("الفترة المختارة لا تحتوي أي يوم عمل (الجمعة والعطلات لا تُحسب). أدخل تاريخ انتهاء آخر:")
+        await update.message.reply_text("الفترة المختارة لا تحتوي أي يوم عمل. أدخل تاريخ انتهاء آخر:")
         return LEAVE_END_DATE
     note = " (بدون راتب، لا تُخصم من الرصيد)" if context.user_data['leave_type'] == logic.UNPAID else ""
-    await update.message.reply_text(f"عدد أيام العمل المطلوبة: {days} يوم{note} (الجمعة والعطلات الرسمية لا تُحسب).\nأدخل سبب الإجازة:")
+    await update.message.reply_text(f"عدد أيام العمل المطلوبة: {days} يوم{note}.\nأدخل سبب الإجازة:")
     return LEAVE_REASON
 
 
@@ -721,11 +726,19 @@ async def dispatch_admin_action(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
     admin_id = query.from_user.id
-    prefixes = ('approve_user_', 'reject_user_', 'admin_approve_', 'admin_reject_', 'admin_unpaid_')
+    prefixes = ('approve_user_', 'reject_user_', 'admin_approve_', 'admin_reject_', 'admin_unpaid_',
+                'emp_suspend_', 'emp_activate_', 'emp_delask_', 'emp_delete_', 'emp_list')
     if not data.startswith(prefixes):
         return False
     if not is_manager(admin_id):
         await query.answer("ليس لديك صلاحيات المدير.", show_alert=True)
+        return True
+    if data == 'emp_list':
+        text, kb = employees_admin_view(get_employee(admin_id))
+        await safe_edit(query, text, kb)
+        return True
+    if data.startswith('emp_'):
+        await employee_admin_action(context, query, data, admin_id)
         return True
     target_id = int(data.rsplit('_', 1)[1])
     if data.startswith('approve_user_'):
@@ -785,6 +798,91 @@ async def cancel_request_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # --------------------------------------------------------------------------
+# Manager: employee administration (suspend / activate / delete)
+# --------------------------------------------------------------------------
+def employees_admin_view(acting_employee):
+    pending = session.query(Employee).filter_by(status=logic.EMP_PENDING).order_by(Employee.full_name).all()
+    others = (
+        session.query(Employee)
+        .filter(Employee.status != logic.EMP_PENDING)
+        .order_by(Employee.status, Employee.department, Employee.full_name)
+        .all()
+    )
+    lines = ["👥 إدارة الموظفين"]
+    keyboard = []
+    if pending:
+        lines.append("\nبانتظار الموافقة:")
+        for emp in pending:
+            lines.append(f"• {emp.full_name} ({emp.department or '-'})")
+            keyboard.append([
+                InlineKeyboardButton(f"✅ موافقة {emp.full_name}", callback_data=f"approve_user_{emp.id}"),
+                InlineKeyboardButton(f"❌ رفض {emp.full_name}", callback_data=f"reject_user_{emp.id}"),
+            ])
+    lines.append("\nالموظفون:")
+    for emp in others:
+        tag = "👑 " if emp.is_manager else ""
+        state = "⏸ موقوف" if emp.status == logic.EMP_SUSPENDED else "نشط"
+        me = " (أنت)" if emp.id == acting_employee.id else ""
+        lines.append(f"• {tag}{emp.full_name}{me} ({emp.department or '-'}) | {state} | {logic.fmt(emp.daily_leave_balance)} ي / {logic.fmt(emp.hourly_leave_balance)} س")
+        if emp.id == acting_employee.id:
+            continue
+        row = []
+        if emp.status == logic.EMP_SUSPENDED:
+            row.append(InlineKeyboardButton(f"▶ تفعيل {emp.full_name}", callback_data=f"emp_activate_{emp.id}"))
+        else:
+            row.append(InlineKeyboardButton(f"⏸ إيقاف {emp.full_name}", callback_data=f"emp_suspend_{emp.id}"))
+        row.append(InlineKeyboardButton(f"🗑 حذف {emp.full_name}", callback_data=f"emp_delask_{emp.id}"))
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
+    return "\n".join(lines)[:4000], InlineKeyboardMarkup(keyboard)
+
+
+async def employee_admin_action(context, query, data: str, admin_id: int):
+    admin = get_employee(admin_id)
+    target_id = int(data.rsplit('_', 1)[1])
+    target = session.get(Employee, target_id)
+    if not target:
+        await safe_edit(query, "الموظف غير موجود.", get_admin_menu_keyboard())
+        return
+
+    if data.startswith('emp_delask_'):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🗑 نعم، احذف {target.full_name} نهائياً", callback_data=f"emp_delete_{target_id}")],
+            [InlineKeyboardButton("🔙 إلغاء", callback_data='emp_list')],
+        ])
+        await safe_edit(query, f"⚠️ سيتم حذف الموظف {target.full_name} وجميع طلباته نهائياً. هل أنت متأكد؟", kb)
+        return
+
+    if data.startswith('emp_delete_'):
+        ok, msg, tid = logic.delete_employee(target_id, acting_emp_id=admin.id)
+        if ok and tid:
+            try:
+                await context.bot.send_message(tid, "تم حذف حسابك من نظام الإجازات من قبل الإدارة.")
+            except Exception:
+                pass
+        await query.answer(msg, show_alert=True)
+    elif data.startswith('emp_suspend_'):
+        res = logic.set_employee_status(target_id, logic.EMP_SUSPENDED, acting_emp_id=admin.id)
+        if res.ok:
+            try:
+                await context.bot.send_message(target.telegram_id, "تم إيقاف حسابك في نظام الإجازات من قبل الإدارة.")
+            except Exception:
+                pass
+        await query.answer("تم إيقاف الحساب." if res.ok else res.error, show_alert=True)
+    elif data.startswith('emp_activate_'):
+        res = logic.set_employee_status(target_id, logic.EMP_APPROVED, acting_emp_id=admin.id)
+        if res.ok:
+            try:
+                await context.bot.send_message(target.telegram_id, "تم إعادة تفعيل حسابك في نظام الإجازات. اضغط /start للبدء.")
+            except Exception:
+                pass
+        await query.answer("تم تفعيل الحساب." if res.ok else res.error, show_alert=True)
+
+    text, kb = employees_admin_view(admin)
+    await safe_edit(query, text, kb)
+
+
+# --------------------------------------------------------------------------
 # Main menu button handler (inside the conversation)
 # --------------------------------------------------------------------------
 def my_requests_view(employee):
@@ -815,7 +913,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     employee = get_employee(user_id)
     if not employee or employee.status != 'approved':
-        await safe_edit(query, "حسابك قيد المراجعة. لا يمكنك القيام بأي إجراء حالياً.")
+        if employee and employee.status == logic.EMP_SUSPENDED:
+            await safe_edit(query, "تم إيقاف حسابك من قبل الإدارة. تواصل مع مديرك لإعادة التفعيل.")
+        else:
+            await safe_edit(query, "حسابك قيد المراجعة. لا يمكنك القيام بأي إجراء حالياً.")
         return MAIN_MENU
 
     # Buttons that also have global handlers
@@ -841,17 +942,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return MAIN_MENU
 
     if data == 'my_balance':
-        unused_d = employee.unused_daily_carryover or 0
-        unused_h = employee.unused_hourly_carryover or 0
         text = (
             f"رصيدك لهذا الشهر:\n"
             f"• أيام: {logic.fmt(employee.daily_leave_balance)} من {logic.fmt(employee.monthly_daily_leave_quota)}\n"
             f"• ساعات: {logic.fmt(employee.hourly_leave_balance)} من {logic.fmt(employee.monthly_hourly_leave_quota)}\n\n"
-            "ℹ️ يتجدد الرصيد أول كل شهر بدون تراكم. أيام العمل من السبت إلى الخميس.\n"
+            "ℹ️ يتجدد الرصيد أول كل شهر.\n"
             "💸 عند عدم كفاية الرصيد يمكنك تقديم إجازة بدون راتب."
         )
-        if unused_d > 0 or unused_h > 0:
-            text += f"\n📝 غير مستخدم من أشهر سابقة (مسجل كملاحظة لدى الإدارة): {logic.fmt(unused_d)} يوم | {logic.fmt(unused_h)} ساعة"
         await safe_edit(query, text, InlineKeyboardMarkup([[InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data='main_menu')]]))
         return MAIN_MENU
 
@@ -905,20 +1002,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return MAIN_MENU
 
     if data == 'admin_manage_employees':
-        pending = session.query(Employee).filter_by(status='pending').all()
-        if not pending:
-            await safe_edit(query, "لا يوجد موظفون في انتظار الموافقة.", get_admin_menu_keyboard())
-            return MAIN_MENU
-        lines = ["الموظفون في انتظار الموافقة:"]
-        keyboard = []
-        for emp in pending:
-            lines.append(f"- {emp.full_name} ({emp.department or '-'}) ID: {emp.id}")
-            keyboard.append([
-                InlineKeyboardButton(f"✅ موافقة {emp.full_name}", callback_data=f"approve_user_{emp.id}"),
-                InlineKeyboardButton(f"❌ رفض {emp.full_name}", callback_data=f"reject_user_{emp.id}"),
-            ])
-        keyboard.append([InlineKeyboardButton("🔙 العودة لقائمة المدير", callback_data='admin_menu')])
-        await safe_edit(query, "\n".join(lines), InlineKeyboardMarkup(keyboard))
+        text, kb = employees_admin_view(employee)
+        await safe_edit(query, text, kb)
         return MAIN_MENU
 
     if data == 'admin_add_employee':
