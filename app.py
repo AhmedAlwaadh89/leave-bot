@@ -106,6 +106,7 @@ app.jinja_env.globals['fmt'] = logic.fmt
 app.jinja_env.globals['STATUS_LABELS'] = logic.STATUS_LABELS
 app.jinja_env.globals['LEAVE_TYPES'] = logic.LEAVE_TYPES
 app.jinja_env.globals['UNPAID'] = logic.UNPAID
+app.jinja_env.globals['WORK_DUTY'] = logic.WORK_DUTY
 app.jinja_env.globals['EMP_STATUS_LABELS'] = logic.EMP_STATUS_LABELS
 
 
@@ -158,6 +159,12 @@ def parse_leave_period(form):
     if leave_type not in logic.LEAVE_TYPES:
         raise ValueError("نوع الإجازة غير صالح.")
     start_date = parse_date(form.get('start_date'), "تاريخ البدء")
+    if leave_type == logic.WORK_DUTY and not (form.get('start_time') and form.get('end_time')):
+        # Work duty for whole day(s)
+        end_date = parse_date(form.get('end_date') or form.get('start_date'), "تاريخ الانتهاء")
+        if end_date < start_date:
+            raise ValueError("تاريخ الانتهاء لا يمكن أن يكون قبل تاريخ البدء.")
+        return leave_type, start_date, end_date, None, None
     if leave_type in (logic.DAILY, logic.UNPAID):
         end_date = parse_date(form.get('end_date') or form.get('start_date'), "تاريخ الانتهاء")
         if end_date < start_date:
@@ -221,6 +228,8 @@ def approve_request(request_id):
         note = " (تم تحويلها إلى إجازة بدون راتب)"
     elif req.leave_type == logic.UNPAID:
         note = " (إجازة بدون راتب)"
+    elif req.leave_type == logic.WORK_DUTY:
+        note = " (مهمة عمل، لا تُخصم من الرصيد)"
     else:
         note = ""
     flash(f"تمت الموافقة على الطلب #{request_id}{note}.", "success")
@@ -525,7 +534,10 @@ def _filtered_requests(args):
     start_date = args.get('start_date')
     end_date = args.get('end_date')
     leave_status = args.get('status')
+    leave_type = args.get('leave_type')
 
+    if leave_type in logic.LEAVE_TYPES:
+        query = query.filter(LeaveRequest.leave_type == leave_type)
     if employee_id:
         try:
             query = query.filter(LeaveRequest.employee_id == int(employee_id))
@@ -597,6 +609,55 @@ def export_reports():
     return output
 
 
+@app.route('/duties')
+@requires_auth
+def work_duties():
+    """Work duties (official assignments) for reconciliation with the attendance (fingerprint) system."""
+    employees = session.query(Employee).order_by(Employee.full_name).all()
+    args = request.args.to_dict()
+    args['leave_type'] = logic.WORK_DUTY
+    if 'status' not in request.args:
+        args['status'] = logic.STATUS_APPROVED
+    results = _filtered_requests(args)
+    holidays = logic.get_holidays()
+    return render_template('duties.html', results=results, employees=employees, filters=args, holidays=holidays)
+
+
+@app.route('/duties/export')
+@requires_auth
+def export_duties():
+    import csv
+    import io
+    from flask import make_response
+
+    args = request.args.to_dict()
+    args['leave_type'] = logic.WORK_DUTY
+    if 'status' not in request.args:
+        args['status'] = logic.STATUS_APPROVED
+    results = _filtered_requests(args)
+    holidays = logic.get_holidays()
+
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['ID', 'الموظف', 'القسم', 'Telegram ID', 'التاريخ من', 'التاريخ إلى', 'من الساعة', 'إلى الساعة', 'المدة', 'وصف المهمة', 'الحالة', 'اعتمدها'])
+    for req in sorted(results, key=lambda r: (r.start_date, r.start_time or datetime.min.time())):
+        if req.start_time and req.end_time:
+            duration = f"{logic.fmt(logic.calculate_leave_hours(req.start_time, req.end_time))} ساعة"
+        else:
+            duration = f"{logic.calculate_leave_days(req.start_date, req.end_date, holidays)} يوم"
+        cw.writerow([
+            req.id, req.employee.full_name, req.employee.department or '', req.employee.telegram_id,
+            req.start_date, req.end_date,
+            req.start_time.strftime('%H:%M') if req.start_time else 'يوم كامل',
+            req.end_time.strftime('%H:%M') if req.end_time else 'يوم كامل',
+            duration, req.reason or '', logic.STATUS_LABELS.get(req.status, req.status), req.approved_by or '',
+        ])
+    output = make_response(si.getvalue().encode('utf-8-sig'))
+    output.headers["Content-Disposition"] = "attachment; filename=work_duties.csv"
+    output.headers["Content-type"] = "text/csv; charset=utf-8"
+    return output
+
+
 @app.route('/admin/add_leave', methods=['GET', 'POST'])
 @requires_auth
 def admin_add_leave():
@@ -622,7 +683,7 @@ def admin_add_leave():
             flash(result.error, "warning")
             return render_template('admin_add_leave.html', employees=employees)
 
-        note = " (بدون راتب)" if leave_type == logic.UNPAID else ""
+        note = {logic.UNPAID: " (بدون راتب)", logic.WORK_DUTY: " (مهمة عمل)"}.get(leave_type, "")
         flash(f"تم إضافة الإجازة والموافقة عليها بنجاح{note}.", "success")
         send_notification(
             employee.telegram_id,

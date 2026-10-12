@@ -27,6 +27,15 @@
                         <input type="date" name="end_date" class="form-control" value="{{ filters.get('end_date', '') }}">
                     </div>
                     <div class="col-md-3">
+                        <label class="form-label">النوع</label>
+                        <select name="leave_type" class="form-select">
+                            <option value="">الكل</option>
+                            {% for t in LEAVE_TYPES %}
+                            <option value="{{ t }}" {% if filters.get('leave_type') == t %}selected{% endif %}>{{ t }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
                         <label class="form-label">الحالة</label>
                         <select name="status" class="form-select">
                             <option value="">الكل</option>
