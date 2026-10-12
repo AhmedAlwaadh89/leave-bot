@@ -28,6 +28,7 @@
                             <option value="يومية">يومية</option>
                             <option value="بالساعة">بالساعة</option>
                             <option value="بدون راتب">بدون راتب (لا تُخصم من الرصيد)</option>
+                            <option value="مهمة عمل">مهمة عمل (لا تُخصم، للمطابقة مع البصمة)</option>
                         </select>
                     </div>
 
@@ -72,12 +73,16 @@
         const endDateDiv = document.getElementById('end_date_div');
         const timeDiv = document.getElementById('time_div');
 
-        if (type !== 'بالساعة') {
-            endDateDiv.style.display = 'block';
-            timeDiv.style.display = 'none';
-        } else {
+        if (type === 'بالساعة') {
             endDateDiv.style.display = 'none';
             timeDiv.style.display = 'flex';
+        } else if (type === 'مهمة عمل') {
+            // Whole day(s) or specific hours: leave the times empty for a full day.
+            endDateDiv.style.display = 'block';
+            timeDiv.style.display = 'flex';
+        } else {
+            endDateDiv.style.display = 'block';
+            timeDiv.style.display = 'none';
         }
     }
     toggleFields();

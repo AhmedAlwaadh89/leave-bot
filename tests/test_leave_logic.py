@@ -100,6 +100,23 @@ class TestApproval(unittest.TestCase):
         self.assertFalse(restored)
         self.assertEqual(emp.daily_leave_balance, 0.0)
 
+    def test_work_duty_never_touches_balance(self):
+        emp = make_employee(self.session, days=0.0, hours=0.0)
+        # whole day duty
+        req = make_request(self.session, emp, date(2026, 10, 4), date(2026, 10, 5), logic.WORK_DUTY)
+        amount, shortage, unit = logic.shortage_for(emp, req.leave_type, req.start_date, req.end_date)
+        self.assertEqual((amount, shortage, unit), (2.0, 0.0, 'يوم'))
+        self.assertTrue(logic.approve_request(req.id, "Boss").ok)
+        self.assertEqual(emp.daily_leave_balance, 0.0)
+        # hourly duty
+        req2 = make_request(self.session, emp, date(2026, 10, 6), date(2026, 10, 6), logic.WORK_DUTY, time(9, 0), time(13, 0))
+        amount, shortage, unit = logic.shortage_for(emp, req2.leave_type, req2.start_date, req2.end_date, req2.start_time, req2.end_time)
+        self.assertEqual((amount, shortage, unit), (4.0, 0.0, 'ساعة'))
+        self.assertTrue(logic.approve_request(req2.id, "Boss").ok)
+        self.assertEqual(emp.hourly_leave_balance, 0.0)
+        tid, restored = logic.delete_request(req2.id)
+        self.assertFalse(restored)
+
     def test_shortage_for_hourly(self):
         emp = make_employee(self.session, hours=1.0)
         amount, shortage, unit = logic.shortage_for(emp, logic.HOURLY, date(2026, 10, 4), date(2026, 10, 4), time(9, 0), time(12, 0))

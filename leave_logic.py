@@ -26,7 +26,9 @@ WEEKEND_DAYS = {4}
 DAILY = 'يومية'
 HOURLY = 'بالساعة'
 UNPAID = 'بدون راتب'
-LEAVE_TYPES = (DAILY, HOURLY, UNPAID)
+WORK_DUTY = 'مهمة عمل'  # official assignment outside the office; never deducted, reconciled with attendance
+LEAVE_TYPES = (DAILY, HOURLY, UNPAID, WORK_DUTY)
+NO_BALANCE_TYPES = (UNPAID, WORK_DUTY)
 
 STATUS_PENDING = 'pending'
 STATUS_APPROVED = 'approved'
@@ -111,7 +113,7 @@ def calculate_leave_hours(start_time, end_time) -> float:
 
 def requested_amount(leave_type, start_date, end_date, start_time=None, end_time=None) -> Tuple[float, str]:
     """Return (amount, unit_label) for the given leave parameters."""
-    if leave_type == HOURLY or (leave_type == UNPAID and start_time and end_time):
+    if leave_type == HOURLY or (leave_type in NO_BALANCE_TYPES and start_time and end_time):
         return calculate_leave_hours(start_time, end_time), 'ساعة'
     return float(calculate_leave_days(start_date, end_date)), 'يوم'
 
@@ -125,13 +127,13 @@ def current_balance(emp: Employee, leave_type: str) -> float:
         return float(emp.daily_leave_balance or 0)
     if leave_type == HOURLY:
         return float(emp.hourly_leave_balance or 0)
-    return float('inf')  # unpaid leave is never limited by balance
+    return float('inf')  # unpaid leave / work duty are never limited by balance
 
 
 def shortage_for(emp: Employee, leave_type, start_date, end_date, start_time=None, end_time=None) -> Tuple[float, float, str]:
     """Return (amount, shortage, unit). shortage is 0 when the balance suffices."""
     amount, unit = requested_amount(leave_type, start_date, end_date, start_time, end_time)
-    if leave_type == UNPAID:
+    if leave_type in NO_BALANCE_TYPES:
         return amount, 0.0, unit
     balance = current_balance(emp, leave_type)
     return amount, max(0.0, amount - balance), unit
@@ -144,9 +146,9 @@ def deduct_balance(emp: Employee, leave_type: str, amount: float) -> None:
     """
     Deduct ``amount`` from the employee's usable balance.
     Raises ValueError when the balance is insufficient (nothing changes).
-    Unpaid leave never touches the balance.
+    Unpaid leave and work duty never touch the balance.
     """
-    if leave_type == UNPAID:
+    if leave_type in NO_BALANCE_TYPES:
         return
     balance = current_balance(emp, leave_type)
     if amount > balance:
@@ -159,7 +161,7 @@ def deduct_balance(emp: Employee, leave_type: str, amount: float) -> None:
 
 def restore_balance(emp: Employee, leave_type: str, amount: float) -> None:
     """Give back a previously deducted amount, capped at the monthly quota."""
-    if leave_type == UNPAID:
+    if leave_type in NO_BALANCE_TYPES:
         return
     if leave_type == DAILY:
         quota = float(emp.monthly_daily_leave_quota or 0)
@@ -294,7 +296,7 @@ def delete_request(req_id: int) -> Tuple[Optional[int], bool]:
     telegram_id = req.employee.telegram_id
     restored = False
     try:
-        if req.status == STATUS_APPROVED and req.leave_type != UNPAID:
+        if req.status == STATUS_APPROVED and req.leave_type not in NO_BALANCE_TYPES:
             amount, _ = request_amount(req)
             restore_balance(req.employee, req.leave_type, amount)
             restored = True

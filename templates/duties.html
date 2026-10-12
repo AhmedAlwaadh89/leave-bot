@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">📋 مهام العمل</h4>
+                <a href="{{ url_for('export_duties', **filters) }}" class="btn btn-success btn-sm">تصدير CSV للمطابقة مع البصمة</a>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    مهام العمل يسجّلها الموظف من البوت أو تضيفها الإدارة، ولا تُخصم من رصيد الإجازات.
+                    تظهر هنا للإدارة فقط لضبط سجل الحضور (البصمة) لاحقاً.
+                </p>
+                <form method="GET" class="row g-3" id="filterForm">
+                    <div class="col-md-3">
+                        <label class="form-label">الموظف</label>
+                        <select name="employee_id" class="form-select">
+                            <option value="">الكل</option>
+                            {% for emp in employees %}
+                            <option value="{{ emp.id }}" {% if filters.get('employee_id') == emp.id|string %}selected{% endif %}>{{ emp.full_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">من تاريخ</label>
+                        <input type="date" name="start_date" class="form-control" value="{{ filters.get('start_date', '') }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">إلى تاريخ</label>
+                        <input type="date" name="end_date" class="form-control" value="{{ filters.get('end_date', '') }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">الحالة</label>
+                        <select name="status" class="form-select">
+                            <option value="" {% if filters.get('status') == '' %}selected{% endif %}>الكل</option>
+                            {% for key, label in STATUS_LABELS.items() %}
+                            <option value="{{ key }}" {% if filters.get('status') == key %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">بحث</button>
+                        <a href="{{ url_for('work_duties') }}" class="btn btn-outline-secondary">إعادة الضبط</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-white"><h5 class="mb-0">النتائج ({{ results|length }})</h5></div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped align-middle">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>الموظف</th>
+                                <th>القسم</th>
+                                <th>التاريخ</th>
+                                <th>الوقت</th>
+                                <th>المدة</th>
+                                <th>وصف المهمة</th>
+                                <th>الحالة</th>
+                                <th>اعتمدها</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for req in results %}
+                            <tr>
+                                <td>#{{ req.id }}</td>
+                                <td>{{ req.employee.full_name }}</td>
+                                <td>{{ req.employee.department or '-' }}</td>
+                                <td>{% if req.start_date == req.end_date %}{{ req.start_date }}{% else %}{{ req.start_date }} ➡️ {{ req.end_date }}{% endif %}</td>
+                                <td>{% if req.start_time %}{{ req.start_time.strftime('%H:%M') }} - {{ req.end_time.strftime('%H:%M') }}{% else %}<span class="text-muted">يوم كامل</span>{% endif %}</td>
+                                <td>{% if req.start_time %}{{ fmt(((req.end_time.hour*60+req.end_time.minute)-(req.start_time.hour*60+req.start_time.minute))/60) }} ساعة{% else %}{{ ((req.end_date - req.start_date).days + 1) }} يوم{% endif %}</td>
+                                <td>{{ req.reason or '-' }}</td>
+                                <td>
+                                    {% if req.status == 'approved' %}<span class="badge bg-success">معتمدة</span>
+                                    {% elif req.status == 'pending' %}<span class="badge bg-warning text-dark">بانتظار الاعتماد</span>
+                                    {% elif req.status == 'cancelled' %}<span class="badge bg-secondary">ملغاة</span>
+                                    {% else %}<span class="badge bg-danger">مرفوضة</span>{% endif %}
+                                </td>
+                                <td>{{ req.approved_by or '-' }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="9" class="text-center text-muted">لا توجد مهام عمل مطابقة.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

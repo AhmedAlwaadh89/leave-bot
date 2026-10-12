@@ -37,8 +37,8 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
     LEAVE_START_TIME, LEAVE_END_TIME, LEAVE_REASON, REPLACEMENT_EMPLOYEE,
     MAIN_MENU,
     ADMIN_ADD_EMP_ID, ADMIN_ADD_EMP_NAME, ADMIN_ADD_EMP_DEPT,
-    UNPAID_CONFIRM,
-) = range(14)
+    UNPAID_CONFIRM, DUTY_SCOPE,
+) = range(15)
 
 ADMIN_CALLBACK_PATTERN = r'^(approve_user_|reject_user_|admin_approve_|admin_reject_|admin_unpaid_|emp_suspend_|emp_activate_|emp_delask_|emp_delete_|emp_list)'
 
@@ -89,6 +89,7 @@ def has_overlapping_leave(employee_id, start_date, end_date) -> bool:
 def get_main_menu_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("➕ طلب إجازة جديد", callback_data='new_leave')],
+        [InlineKeyboardButton("📋 تسجيل مهمة عمل", callback_data='new_duty')],
         [
             InlineKeyboardButton("📂 طلباتي", callback_data='my_requests'),
             InlineKeyboardButton("📊 رصيدي", callback_data='my_balance'),
@@ -184,7 +185,9 @@ def new_request_text(req: LeaveRequest) -> str:
         f"{replacement_text}\n\n"
         f"{logic.balance_hint(emp)}"
     )
-    if req.leave_type == logic.UNPAID:
+    if req.leave_type == logic.WORK_DUTY:
+        text += "\n\n📋 مهمة عمل: لا تُخصم من الرصيد. تُعتمد للمطابقة مع سجل البصمة."
+    elif req.leave_type == logic.UNPAID:
         text += "\n\n💸 إجازة بدون راتب: لا تُخصم من الرصيد."
     elif shortage > 0:
         text += f"\n\n⚠️ الرصيد الحالي لا يغطي الطلب (نقص {logic.fmt(shortage)} {unit}). يمكن رفضه أو تحويله إلى بدون راتب."
@@ -309,6 +312,26 @@ async def cancel_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return MAIN_MENU
 
 
+async def new_duty_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Work duty: an official assignment outside the office. Never deducted; reconciled with attendance."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    context.user_data['leave_type'] = logic.WORK_DUTY
+    await safe_edit(query, "📋 مهمة عمل (لا تُخصم من رصيدك).\nأدخل تاريخ المهمة (YYYY-MM-DD أو مثلاً 'غداً'):")
+    return LEAVE_START_DATE
+
+
+async def duty_scope_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'duty_fullday':
+        await safe_edit(query, "أدخل تاريخ انتهاء المهمة (نفس التاريخ إذا كانت يوماً واحداً):")
+        return LEAVE_END_DATE
+    await safe_edit(query, "أدخل وقت بداية المهمة (HH:MM بصيغة 24 ساعة):")
+    return LEAVE_START_TIME
+
+
 async def leave_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -338,6 +361,17 @@ async def leave_start_date_handler(update: Update, context: ContextTypes.DEFAULT
         return LEAVE_START_DATE
 
     context.user_data['start_date'] = leave_date
+    if context.user_data['leave_type'] == logic.WORK_DUTY:
+        context.user_data['end_date'] = leave_date
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("يوم كامل", callback_data='duty_fullday'),
+                InlineKeyboardButton("ساعات محددة", callback_data='duty_hours'),
+            ],
+            [InlineKeyboardButton("🔙 إلغاء", callback_data='cancel_leave')],
+        ])
+        await update.message.reply_text("هل المهمة ليوم كامل أو لساعات محددة؟", reply_markup=keyboard)
+        return DUTY_SCOPE
     if context.user_data['leave_type'] == logic.HOURLY:
         if not logic.is_working_day(leave_date):
             await update.message.reply_text("هذا اليوم عطلة. اختر يوم عمل آخر:")
@@ -364,7 +398,11 @@ async def leave_end_date_handler(update: Update, context: ContextTypes.DEFAULT_T
     if days == 0:
         await update.message.reply_text("الفترة المختارة لا تحتوي أي يوم عمل. أدخل تاريخ انتهاء آخر:")
         return LEAVE_END_DATE
-    note = " (بدون راتب، لا تُخصم من الرصيد)" if context.user_data['leave_type'] == logic.UNPAID else ""
+    lt = context.user_data['leave_type']
+    if lt == logic.WORK_DUTY:
+        await update.message.reply_text(f"مدة المهمة: {days} يوم.\nأدخل وصف المهمة (الجهة أو الغرض):")
+        return LEAVE_REASON
+    note = " (بدون راتب، لا تُخصم من الرصيد)" if lt == logic.UNPAID else ""
     await update.message.reply_text(f"عدد أيام العمل المطلوبة: {days} يوم{note}.\nأدخل سبب الإجازة:")
     return LEAVE_REASON
 
@@ -390,7 +428,10 @@ async def leave_end_time_handler(update: Update, context: ContextTypes.DEFAULT_T
         return LEAVE_END_TIME
     context.user_data['end_time'] = end_time
     hours = logic.calculate_leave_hours(context.user_data['start_time'], end_time)
-    await update.message.reply_text(f"المدة المطلوبة: {logic.fmt(hours)} ساعة.\nأدخل سبب الإجازة:")
+    if context.user_data['leave_type'] == logic.WORK_DUTY:
+        await update.message.reply_text(f"مدة المهمة: {logic.fmt(hours)} ساعة.\nأدخل وصف المهمة (الجهة أو الغرض):")
+    else:
+        await update.message.reply_text(f"المدة المطلوبة: {logic.fmt(hours)} ساعة.\nأدخل سبب الإجازة:")
     return LEAVE_REASON
 
 
@@ -403,9 +444,14 @@ async def leave_reason_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     ud = context.user_data
     if has_overlapping_leave(employee.id, ud['start_date'], ud['end_date']):
-        await update.message.reply_text("عذراً، لديك طلب إجازة آخر (قيد الانتظار أو معتمد) في نفس الفترة أو يتداخل معها.")
+        await update.message.reply_text("عذراً، لديك طلب آخر (قيد الانتظار أو معتمد) في نفس الفترة أو يتداخل معها.")
         context.user_data.clear()
         return ConversationHandler.END
+
+    if ud['leave_type'] == logic.WORK_DUTY:
+        # Work duty: no balance, no replacement; goes straight to management for confirmation.
+        context.user_data['replacement_id'] = None
+        return await submit_leave_request(update, context)
 
     # Balance check: an insufficient balance blocks the request.
     amount, shortage, unit = logic.shortage_for(
@@ -597,7 +643,10 @@ async def submit_leave_request(update_or_query, context: ContextTypes.DEFAULT_TY
     try:
         new_request = create_leave_request_record(context, employee.id, logic.STATUS_PENDING, 'not_required')
         await notify_managers_new_request(context, new_request)
-        await reply(f"تم تقديم طلب الإجازة #{new_request.id} بنجاح وهو الآن قيد المراجعة.")
+        if new_request.leave_type == logic.WORK_DUTY:
+            await reply(f"تم تسجيل مهمة العمل #{new_request.id} وإرسالها للإدارة للاعتماد. لا تُخصم من رصيدك.")
+        else:
+            await reply(f"تم تقديم طلب الإجازة #{new_request.id} بنجاح وهو الآن قيد المراجعة.")
     except Exception as e:
         logger.exception("Error submitting leave request: %s", e)
         session.rollback()
@@ -635,6 +684,8 @@ async def approve_leave_logic(context, query, req_id: int, admin_id: int, conver
         note = " (تم تحويلها إلى إجازة بدون راتب)"
     elif req.leave_type == logic.UNPAID:
         note = " (إجازة بدون راتب)"
+    elif req.leave_type == logic.WORK_DUTY:
+        note = " (مهمة عمل، لا تُخصم من الرصيد)"
     else:
         note = ""
 
@@ -897,7 +948,8 @@ def my_requests_view(employee):
         if req.replacement_employee_id and req.replacement_employee:
             rep_label = {'accepted': 'وافق', 'rejected': 'رفض', 'pending': 'بانتظار الرد'}.get(req.replacement_approval_status, req.replacement_approval_status)
             rep = f" | البديل {req.replacement_employee.full_name}: {rep_label}"
-        lines.append(f"{icons.get(req.status, '•')} #{req.id} | {req.leave_type} | {logic.leave_details(req)} | {logic.STATUS_LABELS.get(req.status, req.status)}{rep}")
+        type_label = f"📋 {req.leave_type}" if req.leave_type == logic.WORK_DUTY else req.leave_type
+        lines.append(f"{icons.get(req.status, '•')} #{req.id} | {type_label} | {logic.leave_details(req)} | {logic.STATUS_LABELS.get(req.status, req.status)}{rep}")
         if req.status == logic.STATUS_PENDING:
             buttons.append([InlineKeyboardButton(f"↩️ إلغاء الطلب #{req.id}", callback_data=f"cancel_req_{req.id}")])
     buttons.append([InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data='main_menu')])
@@ -935,6 +987,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if data == 'new_leave':
         return await new_leave_start(update, context)
+
+    if data == 'new_duty':
+        return await new_duty_start(update, context)
 
     if data == 'my_requests':
         text, kb = my_requests_view(employee)
@@ -976,7 +1031,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"💰 رصيد: {logic.fmt(emp.daily_leave_balance)} يوم | {logic.fmt(emp.hourly_leave_balance)} ساعة")
             if (emp.unused_daily_carryover or 0) > 0 or (emp.unused_hourly_carryover or 0) > 0:
                 lines.append(f"📝 غير مستخدم سابقاً: {logic.fmt(emp.unused_daily_carryover)} يوم | {logic.fmt(emp.unused_hourly_carryover)} ساعة (للتقدير)")
-            if req.leave_type == logic.UNPAID:
+            if req.leave_type == logic.WORK_DUTY:
+                lines.append("📋 مهمة عمل (لا تُخصم من الرصيد)")
+            elif req.leave_type == logic.UNPAID:
                 lines.append("💸 بدون راتب (لا تُخصم من الرصيد)")
             elif shortage > 0:
                 lines.append(f"⚠️ الرصيد لا يغطي الطلب (نقص {logic.fmt(shortage)} {unit})")
@@ -1141,7 +1198,7 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            CallbackQueryHandler(button_handler, pattern='^(main_menu|new_leave|my_requests|my_balance|admin_)'),
+            CallbackQueryHandler(button_handler, pattern='^(main_menu|new_leave|new_duty|my_requests|my_balance|admin_)'),
         ],
         states={
             FULL_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, full_name_handler)],
@@ -1155,6 +1212,7 @@ def main() -> None:
             LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_handler)],
             REPLACEMENT_EMPLOYEE: [CallbackQueryHandler(replacement_employee_handler, pattern=r'^rep_\d+$')],
             UNPAID_CONFIRM: [CallbackQueryHandler(unpaid_convert_handler, pattern='^unpaid_convert$')],
+            DUTY_SCOPE: [CallbackQueryHandler(duty_scope_handler, pattern='^duty_(fullday|hours)$')],
             ADMIN_ADD_EMP_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_id_handler)],
             ADMIN_ADD_EMP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_name_handler)],
             ADMIN_ADD_EMP_DEPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_employee_dept_handler)],

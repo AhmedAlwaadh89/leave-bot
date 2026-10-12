@@ -173,6 +173,30 @@ class TestApp(unittest.TestCase):
         response = self.post('/reset_all', {'confirm': 'RESET'})
         self.assertEqual(response.status_code, 302)
 
+    @patch('app.send_notification')
+    def test_work_duty_page_add_and_export(self, mock_send):
+        emp = Employee(telegram_id=321, full_name="Duty Emp", status='approved', daily_leave_balance=0.0, hourly_leave_balance=0.0)
+        self.session.add(emp)
+        self.session.commit()
+        emp_id = emp.id
+        # Full-day duty added by admin despite zero balance
+        r = self.post('/admin/add_leave', {'employee_id': str(emp_id), 'leave_type': 'مهمة عمل', 'start_date': '2026-10-04', 'end_date': '2026-10-04', 'start_time': '', 'end_time': '', 'reason': 'زيارة عميل'})
+        self.assertEqual(r.status_code, 302)
+        # Hourly duty
+        r = self.post('/admin/add_leave', {'employee_id': str(emp_id), 'leave_type': 'مهمة عمل', 'start_date': '2026-10-05', 'start_time': '09:00', 'end_time': '12:00', 'reason': 'اجتماع خارجي'})
+        self.assertEqual(r.status_code, 302)
+        reqs = self.session.query(LeaveRequest).filter_by(leave_type='مهمة عمل').all()
+        self.assertEqual(len(reqs), 2)
+        self.assertEqual(self.session.get(Employee, emp_id).daily_leave_balance, 0.0)
+        page = self.client.get('/duties', headers=self.auth)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('Duty Emp'.encode(), page.data)
+        csv_resp = self.client.get('/duties/export', headers=self.auth)
+        self.assertEqual(csv_resp.status_code, 200)
+        body = csv_resp.data.decode('utf-8-sig')
+        self.assertIn('زيارة عميل', body)
+        self.assertIn('09:00', body)
+
     def test_health(self):
         self.assertEqual(self.client.get('/health').status_code, 200)
 
@@ -205,9 +229,9 @@ class TestPagesRender(unittest.TestCase):
         self.session.remove()
 
     def test_all_pages_render(self):
-        for url in ['/', '/employees', '/holidays', '/reports', '/reports?status=approved', '/admin/add_leave', f'/edit_request/{self.req_id}']:
+        for url in ['/', '/employees', '/holidays', '/reports', '/reports?status=approved', '/duties', '/admin/add_leave', f'/edit_request/{self.req_id}']:
             with self.subTest(url=url):
                 response = self.client.get(url, headers=self.auth)
                 self.assertEqual(response.status_code, 200, url)
-                if not url.startswith('/reports'):
+                if not url.startswith(('/reports', '/duties')):
                     self.assertIn(b'_csrf_token', response.data)
