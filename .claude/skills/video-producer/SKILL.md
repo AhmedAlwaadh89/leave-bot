@@ -1,6 +1,6 @@
 ---
 name: video-producer
-description: Orchestrates a full AI video production on Higgsfield from idea to delivered file, running a virtual crew of expert skills in order (creative director -> scriptwriter -> storyboard artist -> director -> editor -> QA reviewer) with approval gates between stages. Use when the user wants to "make a video", "اصنع فيديو", "اريد فيديو", "خطة فيديو من الفكرة للتنفيذ", or asks for a video plan, pipeline, or end-to-end production. Also use when the user complains that Higgsfield results are weak.
+description: Orchestrates a full AI video production on Higgsfield from idea to delivered file, running a virtual crew of expert skills in order (creative director, scriptwriter, storyboard artist, director, editor, QA reviewer) with approval gates between stages. Use when the user wants to "make a video", "اصنع فيديو", "اريد فيديو", "خطة فيديو من الفكرة للتنفيذ", or asks for a video plan, pipeline, or end-to-end production. Also use when the user complains that Higgsfield results are weak.
 ---
 
 # Video Producer (المنتج المنفذ)
