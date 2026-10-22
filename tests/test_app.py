@@ -198,7 +198,12 @@ class TestApp(unittest.TestCase):
         self.assertIn('09:00', body)
 
     def test_health(self):
-        self.assertEqual(self.client.get('/health').status_code, 200)
+        r = self.client.get('/health')
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn('database', r.get_json())  # default check must not touch the database
+        r = self.client.get('/health?db=1')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()['database'], 'ok')
 
 
 if __name__ == '__main__':
