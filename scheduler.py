@@ -34,7 +34,7 @@ RENEWAL_CHECK_TIME = os.getenv("RENEWAL_CHECK_TIME", "00:05")
 REMINDER_TIME = os.getenv("PENDING_REMINDER_TIME", "06:00")  # server time (UTC on most hosts)
 REMINDER_AGE_HOURS = int(os.getenv("PENDING_REMINDER_AGE_HOURS", "24"))
 KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL") or os.getenv("RENDER_EXTERNAL_URL")
-KEEP_ALIVE_MINUTES = int(os.getenv("KEEP_ALIVE_MINUTES", "10"))
+KEEP_ALIVE_MINUTES = int(os.getenv("KEEP_ALIVE_MINUTES", "14"))  # Render sleeps after 15 idle minutes
 
 
 def renew_monthly_leave_balance():
@@ -75,7 +75,7 @@ def remind_pending_requests():
 
 
 def keep_alive_ping():
-    """Hit our own /health so the hosting platform keeps the instance awake."""
+    """Hit our own /health (without the database check) so the hosting platform keeps the instance awake."""
     if not KEEP_ALIVE_URL:
         return
     import urllib.request

@@ -185,21 +185,31 @@ calculate_leave_hours = logic.calculate_leave_hours
 # --- Health Check (for UptimeRobot) ---
 @app.route('/health')
 def health():
-    """Liveness check for uptime monitors and the keep-alive ping."""
-    from sqlalchemy import text as sql_text
-    db_ok = True
-    try:
-        session.execute(sql_text("SELECT 1"))
-    except Exception:
-        db_ok = False
+    """
+    Liveness check for uptime monitors and the keep-alive ping.
+
+    By default it does NOT touch the database: Neon's free tier suspends the
+    database after a few idle minutes and bills compute only while it is awake,
+    so a monitor hitting the database every few minutes would keep it awake
+    around the clock. Pass ?db=1 to also verify the database connection.
+    """
     threads = {t.name for t in threading.enumerate()}
     body = {
-        "status": "ok" if db_ok else "degraded",
-        "database": "ok" if db_ok else "error",
+        "status": "ok",
         "bot": "running" if ("telegram-bot" in threads) else ("disabled" if not token else "stopped"),
         "scheduler": "running" if ("scheduler" in threads) else "stopped",
     }
-    return body, (200 if db_ok else 503)
+    status = 200
+    if request.args.get('db') == '1':
+        from sqlalchemy import text as sql_text
+        try:
+            session.execute(sql_text("SELECT 1"))
+            body["database"] = "ok"
+        except Exception:
+            body["database"] = "error"
+            body["status"] = "degraded"
+            status = 503
+    return body, status
 
 
 # --- Main Routes ---
