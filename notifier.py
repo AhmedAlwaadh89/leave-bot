@@ -43,6 +43,31 @@ def _run(coro_factory):
             loop.close()
 
 
+def run_in_background(fn, *args, **kwargs):
+    """
+    Run a (Telegram) notification job without making the web request wait.
+    Errors are logged, never raised. NOTIFY_SYNC=1 runs it inline (tests).
+    """
+    def job():
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            logger.error("Background notification failed: %s", e)
+        finally:
+            session.remove()
+
+    if os.getenv("NOTIFY_SYNC") == "1":
+        job()
+        return
+    import threading
+    threading.Thread(target=job, daemon=True, name="notify").start()
+
+
+def send_many(chat_ids, text) -> int:
+    """Send the same text to several Telegram chats, skipping employees without Telegram."""
+    return sum(1 for cid in chat_ids if cid and send_message(cid, text))
+
+
 def send_message(chat_id, text) -> bool:
     if not chat_id:
         return False

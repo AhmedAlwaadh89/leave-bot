@@ -1,0 +1,27 @@
+{% extends 'portal/base.html' %}
+{% block title %}تسجيل الدخول{% endblock %}
+{% block content %}
+<div class="card p-4 mt-2">
+    <h4 class="mb-1">تسجيل الدخول</h4>
+    <p class="small-muted mb-4">ادخل برقم هاتفك وكلمة المرور.</p>
+    <form method="POST" action="{{ url_for('portal.login', next=request.args.get('next')) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+            <label class="form-label">رقم الهاتف</label>
+            <input type="tel" name="phone" class="form-control" inputmode="tel" autocomplete="username"
+                   placeholder="07701234567" value="{{ phone }}" required dir="ltr">
+        </div>
+        <div class="mb-4">
+            <label class="form-label">كلمة المرور</label>
+            <input type="password" name="password" class="form-control" autocomplete="current-password" required dir="ltr">
+        </div>
+        <button type="submit" class="btn btn-brand w-100 py-2 fs-5">دخول</button>
+    </form>
+    <hr>
+    <div class="text-center">
+        <span class="small-muted">ليس لديك حساب؟</span>
+        <a href="{{ url_for('portal.register') }}" class="fw-bold">تسجيل موظف جديد</a>
+    </div>
+    <p class="small-muted text-center mt-3 mb-0">كنت مسجلاً سابقاً عبر تيليجرام؟ اطلب من الإدارة تفعيل دخولك برقم هاتفك.</p>
+</div>
+{% endblock %}

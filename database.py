@@ -31,7 +31,11 @@ DEFAULT_MONTHLY_HOURS = 4.0
 class Employee(Base):
     __tablename__ = 'employees'
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)
+    # Telegram is optional: employees can use the web portal only (Telegram is blocked in some countries).
+    telegram_id = Column(BigInteger, unique=True, nullable=True)
+    # Web portal login
+    phone = Column(String, unique=True, nullable=True)
+    password_hash = Column(String, nullable=True)
     full_name = Column(String, nullable=False)
     department = Column(String, nullable=True)
     is_manager = Column(Boolean, default=False)
@@ -173,6 +177,8 @@ _COLUMN_MIGRATIONS = [
     ('employees', 'unused_daily_carryover', 'FLOAT DEFAULT 0', 'FLOAT DEFAULT 0'),
     ('employees', 'unused_hourly_carryover', 'FLOAT DEFAULT 0', 'FLOAT DEFAULT 0'),
     ('employees', 'last_renewal_date', 'DATE', 'DATE'),
+    ('employees', 'phone', 'VARCHAR', 'VARCHAR'),
+    ('employees', 'password_hash', 'VARCHAR', 'VARCHAR'),
 ]
 
 _BIGINT_COLUMNS = [
@@ -201,7 +207,15 @@ def run_migrations(target_engine=None):
                         logger.info("Migrating: adding %s.%s", table, column)
                         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
+                # Unique phone (login) for databases created before the column existed
+                if 'employees' in existing:
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_employees_phone_unique ON employees (phone)"))
+
                 if db_type == 'postgresql':
+                    tg = existing.get('employees', {}).get('telegram_id')
+                    if tg is not None and not tg.get('nullable', True):
+                        logger.info("Migrating: employees.telegram_id -> nullable (web-only employees)")
+                        conn.execute(text("ALTER TABLE employees ALTER COLUMN telegram_id DROP NOT NULL"))
                     for table, column in _BIGINT_COLUMNS:
                         col = existing.get(table, {}).get(column)
                         if col is not None and 'BIGINT' not in str(col['type']).upper():
@@ -262,6 +276,21 @@ def run_one_time_tasks():
 
 
 run_one_time_tasks()
+
+
+def get_or_create_setting(key, factory):
+    """Read a persisted setting, creating it with factory() the first time."""
+    db_session = Session()
+    try:
+        row = db_session.get(SystemSetting, key)
+        if row is None:
+            row = SystemSetting(key=key, value=factory())
+            db_session.add(row)
+            db_session.commit()
+        return row.value
+    finally:
+        db_session.close()
+
 
 if __name__ == "__main__":
     print("Database tables created/updated successfully.")

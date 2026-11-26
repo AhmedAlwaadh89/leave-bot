@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from datetime import datetime  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
 from flask import (  # noqa: E402
     Flask, render_template, redirect, url_for, request, Response, flash, abort,
     session as flask_session,
@@ -25,9 +25,32 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
-if not os.getenv("FLASK_SECRET_KEY"):
-    logger.warning("FLASK_SECRET_KEY not set: a random key is used, web sessions reset on restart.")
+
+
+def _load_secret_key():
+    """
+    FLASK_SECRET_KEY from the environment, else a random key persisted in the
+    database so employees stay signed in across restarts and deploys.
+    """
+    env_key = os.getenv("FLASK_SECRET_KEY")
+    if env_key:
+        return env_key
+    try:
+        from database import get_or_create_setting
+        return get_or_create_setting('flask_secret_key', lambda: secrets.token_hex(32))
+    except Exception as e:
+        logger.warning("Could not persist a secret key (%s); sessions reset on restart.", e)
+        return secrets.token_hex(32)
+
+
+app.secret_key = _load_secret_key()
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    # Render serves over HTTPS; keep plain-HTTP local development working.
+    SESSION_COOKIE_SECURE=bool(os.getenv("RENDER")) or os.getenv("SESSION_COOKIE_SECURE") == "1",
+)
 
 WEB_ADMIN_LABEL = "الإدارة (Web)"
 INDEX_LIMIT = 200  # requests shown on the dashboard home by default
@@ -109,6 +132,10 @@ app.jinja_env.globals['UNPAID'] = logic.UNPAID
 app.jinja_env.globals['WORK_DUTY'] = logic.WORK_DUTY
 app.jinja_env.globals['EMP_STATUS_LABELS'] = logic.EMP_STATUS_LABELS
 
+# --- Employee web portal (works without Telegram) ---
+from portal import bp as portal_bp  # noqa: E402
+app.register_blueprint(portal_bp)
+
 
 @app.before_request
 def csrf_protect():
@@ -128,53 +155,8 @@ def finalize_leave_notifications(req_id, text):
     return notifier.finalize_leave_notifications(req_id, text)
 
 
-# --- Form parsing helpers ---
-def parse_date(value, field_label):
-    try:
-        return datetime.strptime(value, '%Y-%m-%d').date()
-    except (TypeError, ValueError):
-        raise ValueError(f"صيغة {field_label} غير صالحة (YYYY-MM-DD).")
-
-
-def parse_time(value, field_label):
-    try:
-        return datetime.strptime(value, '%H:%M').time()
-    except (TypeError, ValueError):
-        raise ValueError(f"صيغة {field_label} غير صالحة (HH:MM).")
-
-
-def parse_float(value, field_label, minimum=0.0):
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{field_label} يجب أن يكون رقماً.")
-    if f < minimum:
-        raise ValueError(f"{field_label} لا يمكن أن يكون أقل من {logic.fmt(minimum)}.")
-    return f
-
-
-def parse_leave_period(form):
-    """Returns (leave_type, start_date, end_date, start_time, end_time) or raises ValueError."""
-    leave_type = form.get('leave_type')
-    if leave_type not in logic.LEAVE_TYPES:
-        raise ValueError("نوع الإجازة غير صالح.")
-    start_date = parse_date(form.get('start_date'), "تاريخ البدء")
-    if leave_type == logic.WORK_DUTY and not (form.get('start_time') and form.get('end_time')):
-        # Work duty for whole day(s)
-        end_date = parse_date(form.get('end_date') or form.get('start_date'), "تاريخ الانتهاء")
-        if end_date < start_date:
-            raise ValueError("تاريخ الانتهاء لا يمكن أن يكون قبل تاريخ البدء.")
-        return leave_type, start_date, end_date, None, None
-    if leave_type in (logic.DAILY, logic.UNPAID):
-        end_date = parse_date(form.get('end_date') or form.get('start_date'), "تاريخ الانتهاء")
-        if end_date < start_date:
-            raise ValueError("تاريخ الانتهاء لا يمكن أن يكون قبل تاريخ البدء.")
-        return leave_type, start_date, end_date, None, None
-    start_time = parse_time(form.get('start_time'), "وقت البدء")
-    end_time = parse_time(form.get('end_time'), "وقت الانتهاء")
-    if end_time <= start_time:
-        raise ValueError("وقت الانتهاء يجب أن يكون بعد وقت البدء.")
-    return leave_type, start_date, start_date, start_time, end_time
+# --- Form parsing helpers (shared with the employee portal) ---
+from form_utils import parse_date, parse_time, parse_float, parse_leave_period, normalize_phone, MIN_PASSWORD_LENGTH  # noqa: E402,F401
 
 
 # Backwards-compatible aliases used by older code/tests
@@ -212,8 +194,8 @@ def health():
     return body, status
 
 
-# --- Main Routes ---
-@app.route('/')
+# --- Admin dashboard (the site root "/" is the employee portal) ---
+@app.route('/admin')
 @requires_auth
 def index():
     show_all = request.args.get('all') == '1'
@@ -461,41 +443,106 @@ def reset_all_web():
 @app.route('/add_user', methods=['POST'])
 @requires_auth
 def add_user_web():
-    telegram_id = (request.form.get('telegram_id') or '').strip()
+    raw_tid = (request.form.get('telegram_id') or '').strip()
     full_name = (request.form.get('full_name') or '').strip()
     department = (request.form.get('department') or '').strip() or None
+    raw_phone = (request.form.get('phone') or '').strip()
+    password = request.form.get('password') or ''
     is_manager = 'is_manager' in request.form
 
-    if not telegram_id or not full_name:
-        flash("يرجى ملء جميع الحقول المطلوبة (Telegram ID والاسم).", "error")
+    if not full_name or not (raw_tid or raw_phone):
+        flash("يرجى إدخال الاسم ورقم الهاتف (أو Telegram ID).", "error")
+        return redirect(url_for('manage_employees'))
+
+    telegram_id = None
+    if raw_tid:
+        try:
+            telegram_id = int(raw_tid)
+        except ValueError:
+            flash("Telegram ID يجب أن يكون رقماً.", "error")
+            return redirect(url_for('manage_employees'))
+        existing = session.query(Employee).filter_by(telegram_id=telegram_id).first()
+        if existing:
+            flash(f"الموظف بـ Telegram ID {telegram_id} موجود مسبقاً باسم {existing.full_name}.", "error")
+            return redirect(url_for('manage_employees'))
+
+    phone = None
+    if raw_phone:
+        phone = normalize_phone(raw_phone)
+        if not phone:
+            flash("رقم الهاتف غير صحيح.", "error")
+            return redirect(url_for('manage_employees'))
+        existing = session.query(Employee).filter_by(phone=phone).first()
+        if existing:
+            flash(f"رقم الهاتف {phone} مسجل مسبقاً باسم {existing.full_name}.", "error")
+            return redirect(url_for('manage_employees'))
+    if password and len(password) < MIN_PASSWORD_LENGTH:
+        flash(f"كلمة المرور يجب أن تكون {MIN_PASSWORD_LENGTH} أحرف على الأقل.", "error")
+        return redirect(url_for('manage_employees'))
+    if password and not phone:
+        flash("كلمة المرور تحتاج رقم هاتف للدخول به.", "error")
         return redirect(url_for('manage_employees'))
 
     try:
-        telegram_id = int(telegram_id)
-    except ValueError:
-        flash("Telegram ID يجب أن يكون رقماً.", "error")
-        return redirect(url_for('manage_employees'))
-
-    existing = session.query(Employee).filter_by(telegram_id=telegram_id).first()
-    if existing:
-        flash(f"الموظف بـ ID {telegram_id} موجود مسبقاً باسم {existing.full_name}.", "error")
-        return redirect(url_for('manage_employees'))
-
-    try:
+        from werkzeug.security import generate_password_hash
         new_emp = Employee(
             telegram_id=telegram_id,
             full_name=full_name,
             department=department,
+            phone=phone,
+            password_hash=generate_password_hash(password) if password else None,
             status='approved',
             is_manager=is_manager,
         )
         logic.grant_initial_balance(new_emp)
         session.add(new_emp)
         session.commit()
-        flash(f"تم إضافة الموظف {full_name} بنجاح.", "success")
+        msg = f"تم إضافة الموظف {full_name} بنجاح."
+        if password:
+            msg += f" يدخل على الرابط برقم {phone} وكلمة المرور التي حددتها."
+        flash(msg, "success")
     except Exception as e:
         session.rollback()
         flash(f"حدث خطأ أثناء الإضافة: {e}", "error")
+    return redirect(url_for('manage_employees'))
+
+
+@app.route('/set_credentials/<int:user_id>', methods=['POST'])
+@requires_auth
+def set_credentials(user_id):
+    """Enable / reset web-portal login (phone + password) for an employee."""
+    from werkzeug.security import generate_password_hash
+    user = session.get(Employee, user_id)
+    if not user:
+        flash("الموظف غير موجود.", "error")
+        return redirect(url_for('manage_employees'))
+    raw_phone = (request.form.get('phone') or '').strip()
+    password = request.form.get('password') or ''
+
+    if raw_phone:
+        phone = normalize_phone(raw_phone)
+        if not phone:
+            flash("رقم الهاتف غير صحيح.", "error")
+            return redirect(url_for('manage_employees'))
+        other = session.query(Employee).filter(Employee.phone == phone, Employee.id != user.id).first()
+        if other:
+            flash(f"رقم الهاتف {phone} مستخدم من قبل {other.full_name}.", "error")
+            return redirect(url_for('manage_employees'))
+        user.phone = phone
+    if password:
+        if len(password) < MIN_PASSWORD_LENGTH:
+            flash(f"كلمة المرور يجب أن تكون {MIN_PASSWORD_LENGTH} أحرف على الأقل.", "error")
+            return redirect(url_for('manage_employees'))
+        if not user.phone:
+            flash("أدخل رقم الهاتف أولاً، فهو اسم الدخول.", "error")
+            return redirect(url_for('manage_employees'))
+        user.password_hash = generate_password_hash(password)
+    if not raw_phone and not password:
+        flash("لم يتم إدخال أي تغيير.", "error")
+        return redirect(url_for('manage_employees'))
+    session.commit()
+    flash(f"تم حفظ بيانات دخول {user.full_name}. يدخل على رابط البوابة برقم {user.phone or '-'}"
+          + (" وكلمة المرور الجديدة." if password else "."), "success")
     return redirect(url_for('manage_employees'))
 
 

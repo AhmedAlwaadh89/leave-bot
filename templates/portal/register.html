@@ -1,0 +1,36 @@
+{% extends 'portal/base.html' %}
+{% block title %}تسجيل موظف جديد{% endblock %}
+{% block content %}
+<div class="card p-4 mt-2">
+    <h4 class="mb-1">تسجيل موظف جديد</h4>
+    <p class="small-muted mb-4">بعد التسجيل تراجع الإدارة طلبك وتفعّل حسابك.</p>
+    <form method="POST">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+            <label class="form-label">الاسم الكامل</label>
+            <input type="text" name="full_name" class="form-control" value="{{ form.get('full_name', '') }}" required autocomplete="name">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">القسم</label>
+            <input type="text" name="department" class="form-control" value="{{ form.get('department', '') }}">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">رقم الهاتف (يُستخدم للدخول)</label>
+            <input type="tel" name="phone" class="form-control" inputmode="tel" autocomplete="username"
+                   placeholder="07701234567" value="{{ form.get('phone', '') }}" required dir="ltr">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">كلمة المرور</label>
+            <input type="password" name="password" class="form-control" autocomplete="new-password" minlength="6" required dir="ltr">
+            <div class="small-muted mt-1">6 أحرف أو أرقام على الأقل.</div>
+        </div>
+        <div class="mb-4">
+            <label class="form-label">تأكيد كلمة المرور</label>
+            <input type="password" name="password2" class="form-control" autocomplete="new-password" minlength="6" required dir="ltr">
+        </div>
+        <button type="submit" class="btn btn-brand w-100 py-2 fs-5">إرسال طلب التسجيل</button>
+    </form>
+    <hr>
+    <div class="text-center"><a href="{{ url_for('portal.login') }}">لديك حساب؟ تسجيل الدخول</a></div>
+</div>
+{% endblock %}

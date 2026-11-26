@@ -1,0 +1,118 @@
+{% extends 'portal/base.html' %}
+{% set is_duty = form.get('leave_type') == WORK_DUTY %}
+{% block title %}{{ 'تسجيل مهمة عمل' if is_duty else 'طلب إجازة' }}{% endblock %}
+{% block content %}
+<div class="card p-4">
+    <h5 class="mb-3">{{ '📋 تسجيل مهمة عمل' if is_duty else '➕ طلب إجازة جديد' }}</h5>
+    {% if is_duty %}<p class="small-muted">مهمة العمل لا تُخصم من رصيدك وتُعتمد من الإدارة.</p>{% endif %}
+
+    {% if shortage %}
+    <div class="alert alert-warning">
+        <b>⛔ رصيدك لا يكفي لهذا الطلب.</b><br>
+        المطلوب {{ fmt(shortage.amount) }} {{ shortage.unit }}، ورصيدك الحالي {{ fmt(shortage.balance) }} {{ shortage.unit }}
+        (النقص {{ fmt(shortage.shortage) }} {{ shortage.unit }}).<br>
+        يمكنك تحويل الطلب كاملاً إلى <b>إجازة بدون راتب</b> وإرساله للإدارة، أو تعديل المدة.
+    </div>
+    {% endif %}
+
+    <form method="POST" id="reqForm" action="{{ url_for('portal.new_request') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="convert_unpaid" id="convert_unpaid" value="0">
+
+        <div class="mb-3">
+            <label class="form-label">النوع</label>
+            <select name="leave_type" id="leave_type" class="form-select" onchange="toggleFields()">
+                {% for t, label in [('يومية', 'إجازة يومية'), ('بالساعة', 'إجازة بالساعة'), ('بدون راتب', 'إجازة بدون راتب'), ('مهمة عمل', 'مهمة عمل (لا تُخصم)')] %}
+                <option value="{{ t }}" {% if form.get('leave_type', 'يومية') == t %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="mb-3" id="scope_div">
+            <label class="form-label">المدة</label>
+            <select id="scope" class="form-select" onchange="toggleFields()">
+                <option value="days" {% if not form.get('start_time') %}selected{% endif %}>يوم كامل أو أكثر</option>
+                <option value="hours" {% if form.get('start_time') %}selected{% endif %}>ساعات محددة</option>
+            </select>
+        </div>
+
+        <div class="row g-2">
+            <div class="col-6 mb-3">
+                <label class="form-label" id="start_label">من تاريخ</label>
+                <input type="date" name="start_date" class="form-control" value="{{ form.get('start_date', '') }}" required>
+            </div>
+            <div class="col-6 mb-3" id="end_date_div">
+                <label class="form-label">إلى تاريخ</label>
+                <input type="date" name="end_date" class="form-control" value="{{ form.get('end_date', '') }}">
+            </div>
+        </div>
+
+        <div class="row g-2" id="time_div">
+            <div class="col-6 mb-3">
+                <label class="form-label">من الساعة</label>
+                <input type="time" name="start_time" id="start_time" class="form-control" value="{{ form.get('start_time', '') }}">
+            </div>
+            <div class="col-6 mb-3">
+                <label class="form-label">إلى الساعة</label>
+                <input type="time" name="end_time" id="end_time" class="form-control" value="{{ form.get('end_time', '') }}">
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label" id="reason_label">السبب</label>
+            <textarea name="reason" class="form-control" rows="2" required>{{ form.get('reason', '') }}</textarea>
+        </div>
+
+        <div class="mb-4" id="rep_div">
+            <label class="form-label">الموظف البديل (اختياري)</label>
+            <select name="replacement_id" class="form-select">
+                <option value="">بدون بديل</option>
+                {% for o in others %}
+                <option value="{{ o.id }}" {% if form.get('replacement_id') == o.id|string %}selected{% endif %}>{{ o.full_name }}{% if o.department %} ({{ o.department }}){% endif %}</option>
+                {% endfor %}
+            </select>
+            <div class="small-muted mt-1">إن اخترت بديلاً يصله الطلب أولاً للموافقة، ثم يُرفع للإدارة.</div>
+        </div>
+
+        {% if shortage %}
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-warning py-2" onclick="document.getElementById('convert_unpaid').value='1'">💸 تحويل إلى إجازة بدون راتب وإرسال</button>
+            <a href="{{ url_for('portal.home') }}" class="btn btn-outline-secondary">إلغاء</a>
+        </div>
+        {% else %}
+        <button type="submit" class="btn btn-brand w-100 py-2 fs-5">إرسال</button>
+        {% endif %}
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    function toggleFields() {
+        const type = document.getElementById('leave_type').value;
+        const scopeDiv = document.getElementById('scope_div');
+        const scope = document.getElementById('scope').value;
+        const timeDiv = document.getElementById('time_div');
+        const endDiv = document.getElementById('end_date_div');
+        const repDiv = document.getElementById('rep_div');
+        const startTime = document.getElementById('start_time');
+        const endTime = document.getElementById('end_time');
+
+        // Hourly leave is always hours; daily leave is always days; unpaid & duty can be either.
+        let hours;
+        if (type === 'بالساعة') { scopeDiv.style.display = 'none'; hours = true; }
+        else if (type === 'يومية') { scopeDiv.style.display = 'none'; hours = false; }
+        else { scopeDiv.style.display = 'block'; hours = scope === 'hours'; }
+
+        timeDiv.style.display = hours ? 'flex' : 'none';
+        endDiv.style.display = hours ? 'none' : 'block';
+        startTime.required = hours; endTime.required = hours;
+        if (!hours) { startTime.value = ''; endTime.value = ''; }
+        document.getElementById('start_label').textContent = hours ? 'التاريخ' : 'من تاريخ';
+
+        const duty = type === 'مهمة عمل';
+        repDiv.style.display = duty ? 'none' : 'block';
+        document.getElementById('reason_label').textContent = duty ? 'وصف المهمة (الجهة أو الغرض)' : 'السبب';
+    }
+    toggleFields();
+</script>
+{% endblock %}

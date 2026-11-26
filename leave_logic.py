@@ -173,8 +173,14 @@ def restore_balance(emp: Employee, leave_type: str, amount: float) -> None:
 
 def grant_initial_balance(emp: Employee, today: Optional[date] = None) -> None:
     """Give a newly approved employee the full quota for the current month."""
-    emp.daily_leave_balance = float(emp.monthly_daily_leave_quota or 0)
-    emp.hourly_leave_balance = float(emp.monthly_hourly_leave_quota or 0)
+    from database import DEFAULT_MONTHLY_DAYS, DEFAULT_MONTHLY_HOURS
+    # A new, unsaved Employee has no column defaults applied yet (they are set on INSERT).
+    if emp.monthly_daily_leave_quota is None:
+        emp.monthly_daily_leave_quota = DEFAULT_MONTHLY_DAYS
+    if emp.monthly_hourly_leave_quota is None:
+        emp.monthly_hourly_leave_quota = DEFAULT_MONTHLY_HOURS
+    emp.daily_leave_balance = float(emp.monthly_daily_leave_quota)
+    emp.hourly_leave_balance = float(emp.monthly_hourly_leave_quota)
     emp.last_renewal_date = today or date.today()
 
 
@@ -391,6 +397,16 @@ def renew_monthly_balances(today: Optional[date] = None):
         session.rollback()
         raise
     return renewed
+
+
+def has_overlapping_leave(employee_id: int, start_date: date, end_date: date) -> bool:
+    """True if the employee already has a pending/approved request overlapping the period."""
+    return session.query(LeaveRequest).filter(
+        LeaveRequest.employee_id == employee_id,
+        LeaveRequest.status.in_([STATUS_PENDING, STATUS_APPROVED]),
+        LeaveRequest.start_date <= end_date,
+        LeaveRequest.end_date >= start_date,
+    ).first() is not None
 
 
 def pending_requests_for_review():
