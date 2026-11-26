@@ -6,6 +6,7 @@ os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
 os.environ.pop('TELEGRAM_BOT_TOKEN', None)  # never start the bot thread in tests
 os.environ['ADMIN_USERNAME'] = 'admin'
 os.environ['ADMIN_PASSWORD'] = 'secret'
+os.environ['NOTIFY_SYNC'] = '1'  # run notification jobs inline in tests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 

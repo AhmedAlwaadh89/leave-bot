@@ -1,0 +1,99 @@
+{% extends 'portal/base.html' %}
+{% block title %}الرئيسية{% endblock %}
+{% block content %}
+<h5 class="mb-3">أهلاً {{ me.full_name }} 👋</h5>
+
+{% if me.is_manager and pending_reviews %}
+<a href="{{ url_for('portal.manage') }}" class="text-decoration-none">
+    <div class="alert alert-warning d-flex justify-content-between align-items-center">
+        <span>👑 لديك {{ pending_reviews }} عنصر بانتظار قرارك</span><span class="fw-bold">فتح ←</span>
+    </div>
+</a>
+{% endif %}
+
+<div class="row g-3 mb-3">
+    <div class="col-6">
+        <div class="card p-3 text-center">
+            <div class="small-muted mb-2">رصيد الأيام</div>
+            <div class="stat">{{ fmt(me.daily_leave_balance) }}</div>
+            <div class="small-muted mt-1">من {{ fmt(me.monthly_daily_leave_quota) }}</div>
+        </div>
+    </div>
+    <div class="col-6">
+        <div class="card p-3 text-center">
+            <div class="small-muted mb-2">رصيد الساعات</div>
+            <div class="stat">{{ fmt(me.hourly_leave_balance) }}</div>
+            <div class="small-muted mt-1">من {{ fmt(me.monthly_hourly_leave_quota) }}</div>
+        </div>
+    </div>
+</div>
+<p class="small-muted mb-3">يتجدد الرصيد أول كل شهر. عند عدم كفاية الرصيد يمكنك تقديم إجازة بدون راتب.</p>
+
+<div class="d-grid gap-2 mb-4">
+    <a href="{{ url_for('portal.new_request') }}" class="btn btn-brand py-3 fs-5">➕ طلب إجازة جديد</a>
+    <a href="{{ url_for('portal.new_request', type='مهمة عمل') }}" class="btn btn-outline-primary py-2">📋 تسجيل مهمة عمل</a>
+</div>
+
+{% if replacement_asks %}
+<div class="card p-3 mb-3 border border-warning">
+    <h6 class="mb-3">🤝 طلبات بديل موجهة إليك</h6>
+    {% for r in replacement_asks %}
+    <div class="req-row py-2">
+        <div><b>{{ r.employee.full_name }}</b> يطلب أن تكون بديلاً له</div>
+        <div class="small-muted mb-2">{{ r.leave_type }} · {{ r.start_date }}{% if r.end_date != r.start_date %} ← {{ r.end_date }}{% endif %}{% if r.start_time %} · {{ r.start_time.strftime('%H:%M') }}-{{ r.end_time.strftime('%H:%M') }}{% endif %}</div>
+        <div class="d-flex gap-2">
+            <form method="POST" action="{{ url_for('portal.replacement_answer', req_id=r.id, action='accept') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-success w-100">✅ موافق</button>
+            </form>
+            <form method="POST" action="{{ url_for('portal.replacement_answer', req_id=r.id, action='reject') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger w-100">❌ رفض</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-2">📂 طلباتي</h6>
+    {% for r in my_requests %}
+    <div class="req-row py-2">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <b>#{{ r.id }} · {% if r.leave_type == WORK_DUTY %}📋 {% elif r.leave_type == UNPAID %}💸 {% endif %}{{ r.leave_type }}</b>
+                <div class="small-muted">
+                    {{ r.start_date }}{% if r.end_date != r.start_date %} ← {{ r.end_date }}{% endif %}
+                    {% if r.start_time %} · {{ r.start_time.strftime('%H:%M') }}-{{ r.end_time.strftime('%H:%M') }}{% endif %}
+                </div>
+                {% if r.replacement_employee %}
+                <div class="small-muted">البديل: {{ r.replacement_employee.full_name }}
+                    ({{ {'accepted': 'وافق', 'rejected': 'رفض', 'pending': 'بانتظار رده'}.get(r.replacement_approval_status, '-') }})</div>
+                {% endif %}
+            </div>
+            <div class="text-end">
+                {% if r.status == 'approved' %}<span class="badge bg-success">مقبول</span>
+                {% elif r.status == 'pending' %}<span class="badge bg-warning text-dark">قيد المراجعة</span>
+                {% elif r.status == 'cancelled' %}<span class="badge bg-secondary">ملغي</span>
+                {% else %}<span class="badge bg-danger">مرفوض</span>{% endif %}
+            </div>
+        </div>
+        {% if r.status == 'pending' %}
+        <form method="POST" action="{{ url_for('portal.cancel', req_id=r.id) }}" class="mt-2"
+              onsubmit="return confirm('إلغاء هذا الطلب؟')">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-secondary">↩️ إلغاء الطلب</button>
+        </form>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="small-muted py-2">لا توجد طلبات بعد.</div>
+    {% endfor %}
+</div>
+
+<div class="text-center mb-2">
+    <a href="{{ url_for('portal.change_password') }}" class="small">🔑 تغيير كلمة المرور</a>
+</div>
+<p class="small-muted text-center">💡 لإضافة البوابة كتطبيق: افتح قائمة المتصفح ← "إضافة إلى الشاشة الرئيسية".</p>
+{% endblock %}

@@ -35,11 +35,11 @@ class TestApp(unittest.TestCase):
         return employee, req
 
     def test_index_page_unauthorized(self):
-        self.assertEqual(self.client.get('/').status_code, 401)
+        self.assertEqual(self.client.get('/admin').status_code, 401)
 
     def test_index_page_authorized(self):
         self._pending(111)
-        response = self.client.get('/', headers=self.auth)
+        response = self.client.get('/admin', headers=self.auth)
         self.assertEqual(response.status_code, 200)
         self.assertIn('Employee 111'.encode(), response.data)
 
@@ -234,7 +234,7 @@ class TestPagesRender(unittest.TestCase):
         self.session.remove()
 
     def test_all_pages_render(self):
-        for url in ['/', '/employees', '/holidays', '/reports', '/reports?status=approved', '/duties', '/admin/add_leave', f'/edit_request/{self.req_id}']:
+        for url in ['/admin', '/employees', '/holidays', '/reports', '/reports?status=approved', '/duties', '/admin/add_leave', f'/edit_request/{self.req_id}']:
             with self.subTest(url=url):
                 response = self.client.get(url, headers=self.auth)
                 self.assertEqual(response.status_code, 200, url)

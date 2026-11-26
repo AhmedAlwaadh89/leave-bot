@@ -6,7 +6,24 @@
 <form id="upd{{ employee.id }}" action="{{ url_for('update_user', user_id=employee.id) }}" method="POST">
     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 </form>
+<form id="cred{{ employee.id }}" action="{{ url_for('set_credentials', user_id=employee.id) }}" method="POST">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+</form>
 {% endfor %}
+
+<div class="card mb-4 border-primary">
+    <div class="card-body">
+        <h5 class="mb-2">🔗 رابط بوابة الموظفين (بدون تيليجرام)</h5>
+        <div class="input-group mb-2" dir="ltr">
+            <input type="text" class="form-control" id="portalLink" value="{{ url_for('portal.login', _external=True) }}" readonly>
+            <button class="btn btn-primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('portalLink').value); this.textContent='✓ Copied';">نسخ</button>
+        </div>
+        <p class="small text-muted mb-0">
+            أرسل الرابط للموظفين. الموظف الجديد يسجّل بنفسه برقم هاتفه ثم توافق عليه.
+            الموظفون المسجلون سابقاً عبر تيليجرام: أدخل رقم هاتف وكلمة مرور لكل منهم في عمود "دخول الويب" ثم أرسلها له.
+        </p>
+    </div>
+</div>
 
 <div class="row">
     <div class="col-md-12">
@@ -35,6 +52,7 @@
                                 <th>الرصيد الحالي<br><small>أيام / ساعات</small></th>
                                 <th>غير مستخدم سابقاً 📝<br><small>أيام / ساعات</small></th>
                                 <th>آخر تجديد</th>
+                                <th>دخول الويب<br><small>الهاتف / كلمة مرور جديدة</small></th>
                                 <th>حفظ</th>
                                 <th>الإجراءات</th>
                             </tr>
@@ -43,7 +61,7 @@
                             {% for employee in employees %}
                             {% set f = 'upd' ~ employee.id %}
                             <tr>
-                                <td>{{ employee.id }}<br><small class="text-muted" title="Telegram ID">{{ employee.telegram_id }}</small></td>
+                                <td>{{ employee.id }}<br><small class="text-muted" title="Telegram ID">{{ employee.telegram_id or '-' }}</small></td>
                                 <td><input type="text" name="full_name" form="{{ f }}" class="form-control form-control-sm"
                                         value="{{ employee.full_name }}" required></td>
                                 <td><input type="text" name="department" form="{{ f }}" class="form-control form-control-sm"
@@ -90,6 +108,17 @@
                                     </div>
                                 </td>
                                 <td><small>{{ employee.last_renewal_date or '-' }}</small></td>
+                                {% set c = 'cred' ~ employee.id %}
+                                <td style="min-width: 220px;">
+                                    <div class="d-flex gap-1">
+                                        <input type="tel" name="phone" form="{{ c }}" class="form-control form-control-sm" dir="ltr"
+                                            placeholder="07..." value="{{ employee.phone or '' }}" style="width: 110px;">
+                                        <input type="text" name="password" form="{{ c }}" class="form-control form-control-sm" dir="ltr"
+                                            placeholder="{{ 'تغيير' if employee.password_hash else 'كلمة مرور' }}" autocomplete="off" style="width: 90px;">
+                                        <button type="submit" form="{{ c }}" class="btn btn-outline-primary btn-sm" title="حفظ بيانات الدخول">🔑</button>
+                                    </div>
+                                    <small class="{{ 'text-success' if employee.password_hash else 'text-danger' }}">{{ '✓ مفعّل' if employee.password_hash else 'غير مفعّل' }}</small>
+                                </td>
                                 <td>
                                     <button type="submit" form="{{ f }}" class="btn btn-primary btn-sm">حفظ</button>
                                 </td>
@@ -160,8 +189,16 @@
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label for="telegram_id" class="form-label">Telegram ID</label>
-                        <input type="number" class="form-control" id="telegram_id" name="telegram_id" required>
+                        <label for="phone" class="form-label">رقم الهاتف (للدخول على البوابة)</label>
+                        <input type="tel" class="form-control" id="phone" name="phone" dir="ltr" placeholder="07701234567">
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">كلمة مرور أولية (6 أحرف على الأقل)</label>
+                        <input type="text" class="form-control" id="password" name="password" dir="ltr" autocomplete="off">
+                    </div>
+                    <div class="mb-3">
+                        <label for="telegram_id" class="form-label">Telegram ID (اختياري)</label>
+                        <input type="number" class="form-control" id="telegram_id" name="telegram_id">
                     </div>
                     <div class="mb-3">
                         <label for="full_name" class="form-label">الاسم الكامل</label>

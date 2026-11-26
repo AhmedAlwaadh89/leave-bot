@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#5b5bd6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="الإجازات">
+    <title>{% block title %}بوابة الإجازات{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.rtl.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --brand: #5b5bd6; }
+        body { font-family: 'Cairo', sans-serif; background: #f4f5fb; min-height: 100vh; }
+        .topbar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
+        .topbar a, .topbar button { color: #fff; text-decoration: none; }
+        .card { border: none; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+        .btn { border-radius: 12px; }
+        .btn-brand { background: var(--brand); color: #fff; border: none; }
+        .btn-brand:hover { background: #4a4ac4; color: #fff; }
+        .stat { font-size: 2rem; font-weight: 700; line-height: 1; }
+        .form-control, .form-select { border-radius: 12px; padding: .7rem .9rem; font-size: 1rem; }
+        .small-muted { color: #6c757d; font-size: .85rem; }
+        .req-row + .req-row { border-top: 1px solid #eee; }
+        .bottom-nav { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #e5e5ef; }
+        .bottom-nav a { flex: 1; text-align: center; padding: .55rem 0; color: #555; text-decoration: none; font-size: .85rem; }
+        .bottom-nav a.active { color: var(--brand); font-weight: 700; }
+        .container-narrow { max-width: 720px; }
+    </style>
+</head>
+<body>
+    <div class="topbar py-3 mb-3">
+        <div class="container container-narrow d-flex justify-content-between align-items-center">
+            <a href="{{ url_for('portal.root') }}" class="fw-bold fs-5">🏢 بوابة الإجازات</a>
+            {% if portal_employee %}
+            <div class="d-flex align-items-center gap-3">
+                <span class="small d-none d-sm-inline">{{ portal_employee.full_name }}</span>
+                <form method="POST" action="{{ url_for('portal.logout') }}" class="m-0">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-light">خروج</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="container container-narrow pb-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert" style="white-space: pre-line;">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="إغلاق"></button>
+        </div>
+        {% endfor %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </div>
+
+    {% if portal_employee %}
+    <nav class="bottom-nav d-flex">
+        <a href="{{ url_for('portal.home') }}" class="{{ 'active' if request.endpoint == 'portal.home' }}">🏠<br>الرئيسية</a>
+        <a href="{{ url_for('portal.new_request') }}" class="{{ 'active' if request.endpoint == 'portal.new_request' and request.args.get('type') != 'مهمة عمل' }}">➕<br>طلب إجازة</a>
+        <a href="{{ url_for('portal.new_request', type='مهمة عمل') }}" class="{{ 'active' if request.args.get('type') == 'مهمة عمل' }}">📋<br>مهمة عمل</a>
+        {% if portal_employee.is_manager %}
+        <a href="{{ url_for('portal.manage') }}" class="{{ 'active' if request.endpoint == 'portal.manage' }}">👑<br>الإدارة</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

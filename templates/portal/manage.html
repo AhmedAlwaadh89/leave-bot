@@ -1,0 +1,99 @@
+{% extends 'portal/base.html' %}
+{% block title %}الإدارة{% endblock %}
+{% block content %}
+<h5 class="mb-3">👑 الإدارة</h5>
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-2">📩 طلبات بانتظار القرار ({{ reviews|length }})</h6>
+    {% if own_pending %}<div class="small-muted mb-2">طلباتك أنت لا تظهر هنا؛ يقررها مدير آخر أو لوحة الإدارة.</div>{% endif %}
+    {% for item in reviews %}
+    {% set r = item.req %}{% set e = r.employee %}
+    <div class="req-row py-3">
+        <div class="d-flex justify-content-between">
+            <b>#{{ r.id }} · {{ e.full_name }}</b>
+            <span class="small-muted">{{ e.department or '-' }}</span>
+        </div>
+        <div>{% if r.leave_type == WORK_DUTY %}📋 {% elif r.leave_type == UNPAID %}💸 {% endif %}{{ r.leave_type }} · {{ fmt(item.amount) }} {{ item.unit }}</div>
+        <div class="small-muted">
+            {{ r.start_date }}{% if r.end_date != r.start_date %} ← {{ r.end_date }}{% endif %}
+            {% if r.start_time %} · {{ r.start_time.strftime('%H:%M') }}-{{ r.end_time.strftime('%H:%M') }}{% endif %}
+        </div>
+        <div class="small">السبب: {{ r.reason or '-' }}</div>
+        {% if r.replacement_employee %}<div class="small-muted">البديل: {{ r.replacement_employee.full_name }} (وافق)</div>{% endif %}
+        <div class="small-muted">الرصيد: {{ fmt(e.daily_leave_balance) }} يوم | {{ fmt(e.hourly_leave_balance) }} ساعة</div>
+        {% if (e.unused_daily_carryover or 0) > 0 or (e.unused_hourly_carryover or 0) > 0 %}
+        <div class="small text-warning">📝 غير مستخدم سابقاً: {{ fmt(e.unused_daily_carryover) }} يوم | {{ fmt(e.unused_hourly_carryover) }} ساعة (للتقدير)</div>
+        {% endif %}
+        {% if item.shortage > 0 %}
+        <div class="small text-danger">⚠️ الرصيد لا يغطي الطلب (نقص {{ fmt(item.shortage) }} {{ item.unit }})</div>
+        {% endif %}
+        <div class="d-flex gap-2 mt-2 flex-wrap">
+            {% if item.shortage > 0 %}
+            <form method="POST" action="{{ url_for('portal.decide', req_id=r.id, action='unpaid') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-warning w-100">💸 بدون راتب وموافقة</button>
+            </form>
+            {% else %}
+            <form method="POST" action="{{ url_for('portal.decide', req_id=r.id, action='approve') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-success w-100">✅ موافقة</button>
+            </form>
+            {% endif %}
+            <form method="POST" action="{{ url_for('portal.decide', req_id=r.id, action='reject') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger w-100">❌ رفض</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="small-muted py-2">لا توجد طلبات بانتظار القرار.</div>
+    {% endfor %}
+</div>
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-2">👤 تسجيلات بانتظار الموافقة ({{ pending_users|length }})</h6>
+    {% for u in pending_users %}
+    <div class="req-row py-2">
+        <b>{{ u.full_name }}</b> <span class="small-muted">({{ u.department or '-' }}) · <span dir="ltr">{{ u.phone or '-' }}</span></span>
+        <div class="d-flex gap-2 mt-2">
+            <form method="POST" action="{{ url_for('portal.manage_user', user_id=u.id, action='approve') }}" class="flex-fill">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-success w-100">✅ موافقة</button>
+            </form>
+            <form method="POST" action="{{ url_for('portal.manage_user', user_id=u.id, action='reject') }}" class="flex-fill"
+                  onsubmit="return confirm('رفض وحذف طلب التسجيل؟')">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger w-100">❌ رفض</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="small-muted py-2">لا توجد تسجيلات جديدة.</div>
+    {% endfor %}
+</div>
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-2">📊 الموظفون والأرصدة</h6>
+    {% for e in employees %}
+    <div class="req-row py-2 d-flex justify-content-between align-items-center">
+        <div>
+            <b>{% if e.is_manager %}👑 {% endif %}{{ e.full_name }}</b>{% if e.id == me.id %} <span class="small-muted">(أنت)</span>{% endif %}
+            <div class="small-muted">{{ e.department or '-' }} · {{ fmt(e.daily_leave_balance) }}/{{ fmt(e.monthly_daily_leave_quota) }} يوم · {{ fmt(e.hourly_leave_balance) }}/{{ fmt(e.monthly_hourly_leave_quota) }} ساعة
+                {% if not e.password_hash %} · <span class="text-danger">بدون دخول ويب</span>{% endif %}</div>
+        </div>
+        {% if e.id != me.id %}
+        <form method="POST" action="{{ url_for('portal.manage_user', user_id=e.id, action='activate' if e.status == 'suspended' else 'suspend') }}"
+              onsubmit="return confirm('{{ 'تفعيل' if e.status == 'suspended' else 'إيقاف' }} حساب {{ e.full_name }}؟')">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            {% if e.status == 'suspended' %}
+            <button class="btn btn-sm btn-success">▶ تفعيل</button>
+            {% else %}
+            <button class="btn btn-sm btn-outline-secondary">⏸ إيقاف</button>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
+    {% endfor %}
+    <p class="small-muted mt-2 mb-0">تفعيل دخول الويب لموظف قديم، وتعديل الأرصدة والحذف: من لوحة الإدارة الكاملة.</p>
+</div>
+{% endblock %}
